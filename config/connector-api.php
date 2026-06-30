@@ -40,6 +40,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Chat tool injection
+    |--------------------------------------------------------------------------
+    | Master switch (R43) for surfacing API routes as live tools inside the chat
+    | loop. When false the chat behaves exactly as before — no API tools are
+    | injected — and the rest of the package (config UI, test, try) still works.
+    */
+    'chat_tools' => [
+        'enabled' => (bool) env('API_CONNECTOR_CHAT_TOOLS_ENABLED', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Tool registry
     |--------------------------------------------------------------------------
     | Hard cap on the number of API tools injected into a single conversation
