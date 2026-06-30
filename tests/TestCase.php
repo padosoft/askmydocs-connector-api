@@ -28,9 +28,13 @@ abstract class TestCase extends Orchestra
             'database' => ':memory:',
             'prefix' => '',
         ]);
-        // Deterministic SSRF behaviour in tests: keep the guard on but allow
-        // example.test / 127.0.0.1 via an allowlist so Http::fake targets pass.
+        // Deterministic SSRF behaviour in tests: keep the guard ON but skip DNS
+        // resolution (fake hosts don't resolve) and allow http so Http::fake
+        // targets like http://api.example.test pass. UrlGuard's own unit test
+        // exercises the strict prod policy (https-only + DNS + private blocks).
         $app['config']->set('connector-api.ssrf.enabled', true);
         $app['config']->set('connector-api.ssrf.https_only', false);
+        $app['config']->set('connector-api.ssrf.resolve_dns', false);
+        $app['config']->set('connector-api.ssrf.allowlist', []);
     }
 }

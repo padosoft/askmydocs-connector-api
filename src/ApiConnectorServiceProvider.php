@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Padosoft\AskMyDocsConnectorApi;
 
 use Illuminate\Support\ServiceProvider;
+use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
+use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant;
+use Padosoft\AskMyDocsConnectorApi\Support\UrlGuard;
 
 /**
  * Service provider for the AskMyDocs API connector.
@@ -58,7 +62,20 @@ class ApiConnectorServiceProvider extends ServiceProvider
      */
     protected function bindServices(): void
     {
-        //
+        // SSRF guard resolved from config; shared by tester + executor + oauth2.
+        $this->app->singleton(UrlGuard::class, static fn (): UrlGuard => UrlGuard::fromConfig());
+
+        $this->app->singleton(AuthApplierFactory::class);
+
+        // No-op assistant by default; the host rebinds it to an AI-backed impl.
+        if (! $this->app->bound(ToolDescriptionAssistant::class)) {
+            $this->app->bind(ToolDescriptionAssistant::class, NullToolDescriptionAssistant::class);
+        }
+
+        // RequestPlanner, OutputTransformer, HttpDispatcher, SchemaInferrer,
+        // ToolDefinitionGenerator, ApiRouteTester, ApiToolExecutor and
+        // ApiToolRegistry are resolved by the container via their typed
+        // constructor dependencies — no explicit binding required.
     }
 
     /**

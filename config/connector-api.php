@@ -16,6 +16,8 @@ return [
     'ssrf' => [
         'enabled' => (bool) env('API_CONNECTOR_SSRF_ENABLED', true),
         'https_only' => (bool) env('API_CONNECTOR_HTTPS_ONLY', true),
+        // Resolve hostnames and check every A/AAAA address (DNS-rebinding guard).
+        'resolve_dns' => (bool) env('API_CONNECTOR_SSRF_RESOLVE_DNS', true),
         // list<string> of allowed host suffixes, e.g. ['api.clientex.com'].
         // Empty = allow any public host (still blocks private ranges).
         'allowlist' => array_values(array_filter(array_map(
