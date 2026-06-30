@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Padosoft\AskMyDocsConnectorApi;
 
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
 use Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant;
+use Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor;
+use Padosoft\AskMyDocsConnectorApi\Services\ApiToolRegistry;
 use Padosoft\AskMyDocsConnectorApi\Support\UrlGuard;
 
 /**
@@ -18,9 +21,9 @@ use Padosoft\AskMyDocsConnectorApi\Support\UrlGuard;
  * admin HTTP routes (gated by the host-supplied middleware stack, R32).
  *
  * The host application wires the package into its chat tool loop by resolving
- * {@see \Padosoft\AskMyDocsConnectorApi\Services\ApiToolRegistry} +
- * {@see \Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor}, and binds the
- * {@see \Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant}
+ * {@see ApiToolRegistry} +
+ * {@see ApiToolExecutor}, and binds the
+ * {@see ToolDescriptionAssistant}
  * contract to an implementation backed by its AI manager.
  */
 class ApiConnectorServiceProvider extends ServiceProvider
@@ -52,6 +55,10 @@ class ApiConnectorServiceProvider extends ServiceProvider
                 __DIR__.'/../config/connector-api.php' => config_path('connector-api.php'),
             ], 'api-connector-config');
 
+            $this->publishes([
+                __DIR__.'/../routes/api.php' => base_path('routes/connector-api.php'),
+            ], 'api-connector-routes');
+
             $this->registerCommands();
         }
     }
@@ -79,12 +86,24 @@ class ApiConnectorServiceProvider extends ServiceProvider
     }
 
     /**
-     * Load the admin HTTP routes under the host-configured prefix + middleware.
-     * Filled in once the controllers land (Task #4).
+     * Load the admin HTTP routes under the host-configured prefix + middleware
+     * (R32 — the host MUST override the default `api` middleware with its
+     * authenticated admin stack). No-op when `connector-api.routes.enabled` is
+     * false so a deployment can ship the package without the admin surface.
      */
     protected function registerRoutes(): void
     {
-        //
+        if (! (bool) config('connector-api.routes.enabled', true)) {
+            return;
+        }
+
+        $prefix = (string) config('connector-api.routes.prefix', 'api/admin/api-connectors');
+        /** @var array<int,string> $middleware */
+        $middleware = (array) config('connector-api.routes.middleware', ['api']);
+
+        Route::group(['prefix' => $prefix, 'middleware' => $middleware], function (): void {
+            $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
+        });
     }
 
     /**
