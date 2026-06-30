@@ -107,10 +107,13 @@ class ApiConnectorServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register the package's Artisan commands. Filled in Task #9.
+     * Register the package's Artisan commands (R44 PHP surface).
      */
     protected function registerCommands(): void
     {
-        //
+        $this->commands([
+            \Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand::class,
+            \Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand::class,
+        ]);
     }
 }
