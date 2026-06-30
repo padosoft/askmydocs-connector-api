@@ -1,0 +1,64 @@
+{
+    "name": "padosoft/askmydocs-connector-api",
+    "description": "API connector for AskMyDocs — turn any configured HTTP endpoint into a live LLM tool callable during chat (RAG + fresh data). Fase 1: live tools; Fase 2 (ingest) designed in.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": [
+        "laravel",
+        "askmydocs",
+        "connectors",
+        "rag",
+        "llm",
+        "tool-calling",
+        "function-calling",
+        "padosoft"
+    ],
+    "authors": [
+        {
+            "name": "Lorenzo Padovani",
+            "email": "lorenzo.padovani@padosoft.com"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/http": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "nesbot/carbon": "^2.0|^3.0",
+        "padosoft/askmydocs-connector-base": "^1.4"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0|^12.0",
+        "orchestra/testbench": "^10.0|^11.0",
+        "mockery/mockery": "^1.6",
+        "phpstan/phpstan": "^2.0",
+        "laravel/pint": "^1.18"
+    },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/padosoft/askmydocs-connector-base",
+            "comment": "Dev-time resolution of the not-yet-Packagist base package. Ignored when this library is installed as a dependency — the host root composer.json provides resolution."
+        }
+    ],
+    "autoload": {
+        "psr-4": { "Padosoft\\AskMyDocsConnectorApi\\": "src/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "Padosoft\\AskMyDocsConnectorApi\\Tests\\": "tests/" }
+    },
+    "extra": {
+        "laravel": {
+            "providers": ["Padosoft\\AskMyDocsConnectorApi\\ApiConnectorServiceProvider"]
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "format": "vendor/bin/pint",
+        "analyse": "vendor/bin/phpstan analyse --memory-limit=512M"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": { "sort-packages": true }
+}
