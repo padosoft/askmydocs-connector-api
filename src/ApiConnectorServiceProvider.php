@@ -7,6 +7,8 @@ namespace Padosoft\AskMyDocsConnectorApi;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
+use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand;
+use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
 use Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant;
 use Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor;
@@ -58,6 +60,12 @@ class ApiConnectorServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../routes/api.php' => base_path('routes/connector-api.php'),
             ], 'api-connector-routes');
+
+            // Brand icon so a host UI can render this connector alongside the
+            // ingest connectors (mirrors connector-imap's `-assets` group).
+            $this->publishes([
+                __DIR__.'/../public/icons' => public_path('connectors'),
+            ], 'api-connector-assets');
 
             $this->registerCommands();
         }
@@ -112,8 +120,8 @@ class ApiConnectorServiceProvider extends ServiceProvider
     protected function registerCommands(): void
     {
         $this->commands([
-            \Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand::class,
-            \Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand::class,
+            ApiConnectorListCommand::class,
+            ApiConnectorTestCommand::class,
         ]);
     }
 }
