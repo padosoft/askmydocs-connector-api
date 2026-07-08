@@ -19,11 +19,11 @@ final class AuthApplierFactory
     public function for(AuthType $type): AuthApplier
     {
         return match ($type) {
-            AuthType::None => new NoneAuth(),
-            AuthType::ApiKey => new ApiKeyAuth(),
-            AuthType::Bearer => new BearerAuth(),
-            AuthType::Basic => new BasicAuth(),
-            AuthType::Custom => new CustomHeaderAuth(),
+            AuthType::None => new NoneAuth,
+            AuthType::ApiKey => new ApiKeyAuth,
+            AuthType::Bearer => new BearerAuth,
+            AuthType::Basic => new BasicAuth,
+            AuthType::Custom => new CustomHeaderAuth,
             AuthType::OAuth2ClientCredentials => new OAuth2ClientCredentialsAuth($this->urlGuard),
         };
     }

@@ -8,6 +8,8 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthMaterial;
+use Padosoft\AskMyDocsConnectorApi\Services\ApiRouteTester;
+use Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor;
 
 /**
  * Sends a {@see RequestPlan} (+ {@see AuthMaterial}) over Laravel's HTTP client
@@ -16,8 +18,8 @@ use Padosoft\AskMyDocsConnectorApi\Auth\AuthMaterial;
  *   - retry-with-backoff ONLY on transient failures (5xx / connection errors),
  *     never on 4xx.
  *
- * Shared by {@see \Padosoft\AskMyDocsConnectorApi\Services\ApiRouteTester} and
- * {@see \Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor} so test and
+ * Shared by {@see ApiRouteTester} and
+ * {@see ApiToolExecutor} so test and
  * runtime behave identically.
  */
 final class HttpDispatcher

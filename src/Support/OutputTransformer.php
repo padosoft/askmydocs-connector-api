@@ -22,7 +22,6 @@ final class OutputTransformer
      *
      * @param  mixed  $body  decoded response body
      * @param  array<string,mixed>|null  $transform  {include?: list<string>, exclude?: list<string>}
-     * @return mixed
      */
     public function selectFields(mixed $body, ?array $transform): mixed
     {
@@ -53,9 +52,6 @@ final class OutputTransformer
     /**
      * Cap the encoded size of a payload. Returns the payload unchanged when it
      * fits, or a truncated envelope when it does not.
-     *
-     * @param  mixed  $payload
-     * @return mixed
      */
     public function capBytes(mixed $payload, int $maxBytes): mixed
     {
@@ -77,7 +73,6 @@ final class OutputTransformer
     }
 
     /**
-     * @param  mixed  $value
      * @return list<string>
      */
     private function stringList(mixed $value): array

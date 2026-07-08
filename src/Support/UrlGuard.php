@@ -26,10 +26,10 @@ use Padosoft\AskMyDocsConnectorApi\Exceptions\UrlNotAllowedException;
 final class UrlGuard
 {
     /**
-     * @param  bool  $enabled        master switch (off only for dev/tests)
-     * @param  bool  $httpsOnly      reject non-https schemes
+     * @param  bool  $enabled  master switch (off only for dev/tests)
+     * @param  bool  $httpsOnly  reject non-https schemes
      * @param  list<string>  $allowlist  allowed host suffixes ([] = any public host)
-     * @param  bool  $resolveDns     resolve hostnames and check every IP (DNS-rebinding guard)
+     * @param  bool  $resolveDns  resolve hostnames and check every IP (DNS-rebinding guard)
      */
     public function __construct(
         private readonly bool $enabled = true,

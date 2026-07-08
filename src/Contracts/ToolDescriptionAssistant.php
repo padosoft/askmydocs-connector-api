@@ -16,7 +16,7 @@ interface ToolDescriptionAssistant
      * Suggest a tool name (snake_case slug) + description from the route context.
      *
      * @param  array<string,mixed>  $context  {method, url, params, response_sample}
-     * @return array{name?: string, description?: string}|null  null when unavailable
+     * @return array{name?: string, description?: string}|null null when unavailable
      */
     public function suggest(array $context): ?array;
 }

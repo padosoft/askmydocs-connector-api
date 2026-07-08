@@ -46,7 +46,7 @@ return new class extends Migration
             $table->json('output_schema')->nullable();   // inferred response structure
             $table->json('param_mapping')->nullable();   // location/source/value/ref per param
             $table->json('tool_definition')->nullable(); // {name,description,input_schema} cache
-            $table->json('output_transform')->nullable();// field selection / JSONPath / limits
+            $table->json('output_transform')->nullable(); // field selection / JSONPath / limits
             $table->string('mode', 8)->default('tool');
             $table->string('status', 12)->default('draft');
             $table->unsignedInteger('timeout_ms')->nullable();
