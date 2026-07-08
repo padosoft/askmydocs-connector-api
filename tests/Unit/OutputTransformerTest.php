@@ -10,7 +10,9 @@ use Padosoft\AskMyDocsConnectorApi\Tests\TestCase;
 /**
  * Covers the two output-shaping concerns of {@see OutputTransformer}: the byte
  * cap (truncated envelope vs untouched pass-through) and dot-path field
- * selection (include / exclude on concrete paths).
+ * selection (include / exclude on concrete paths AND `*` wildcards across
+ * collections — the load-bearing case for stripping a sensitive field from
+ * every element before the payload reaches the LLM).
  */
 final class OutputTransformerTest extends TestCase
 {
@@ -88,5 +90,64 @@ final class OutputTransformerTest extends TestCase
     public function test_select_fields_returns_scalar_body_unchanged(): void
     {
         $this->assertSame('plain', $this->transformer->selectFields('plain', ['include' => ['x']]));
+    }
+
+    public function test_include_wildcard_keeps_only_matched_field_per_element(): void
+    {
+        $body = ['orders' => [
+            ['id' => 1, 'amount' => 9, 'card' => '4111'],
+            ['id' => 2, 'amount' => 8, 'card' => '4222'],
+        ]];
+
+        $out = $this->transformer->selectFields($body, ['include' => ['orders.*.id']]);
+
+        $this->assertSame(['orders' => [['id' => 1], ['id' => 2]]], $out);
+    }
+
+    public function test_include_multiple_wildcards_compose_over_same_collection(): void
+    {
+        $body = ['orders' => [
+            ['id' => 1, 'amount' => 9, 'card' => '4111'],
+            ['id' => 2, 'amount' => 8, 'card' => '4222'],
+        ]];
+
+        $out = $this->transformer->selectFields($body, [
+            'include' => ['orders.*.id', 'orders.*.amount'],
+        ]);
+
+        $this->assertSame(['orders' => [
+            ['id' => 1, 'amount' => 9],
+            ['id' => 2, 'amount' => 8],
+        ]], $out);
+        // The list shape is preserved (not turned into an assoc map).
+        $this->assertArrayHasKey(0, $out['orders']);
+    }
+
+    public function test_exclude_wildcard_strips_sensitive_field_from_every_element(): void
+    {
+        $body = ['orders' => [
+            ['id' => 1, 'amount' => 9, 'card' => '4111'],
+            ['id' => 2, 'amount' => 8, 'card' => '4222'],
+        ]];
+
+        $out = $this->transformer->selectFields($body, ['exclude' => ['orders.*.card']]);
+
+        $this->assertSame(['orders' => [
+            ['id' => 1, 'amount' => 9],
+            ['id' => 2, 'amount' => 8],
+        ]], $out);
+        // The sensitive field must be gone from EVERY element — no leak.
+        foreach ($out['orders'] as $order) {
+            $this->assertArrayNotHasKey('card', $order);
+        }
+    }
+
+    public function test_exclude_missing_wildcard_path_leaves_body_unchanged(): void
+    {
+        $body = ['orders' => [['id' => 1], ['id' => 2]]];
+
+        $out = $this->transformer->selectFields($body, ['exclude' => ['orders.*.card']]);
+
+        $this->assertSame($body, $out);
     }
 }
