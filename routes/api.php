@@ -27,6 +27,12 @@ use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteController;
 */
 
 Route::name('api-connectors.')->group(function (): void {
+    // Playground — ad-hoc live probe of a FREE (no-auth) endpoint. Persists
+    // nothing (no connector/route rows), infers no schema; a read-only
+    // diagnostic. No {route} path param, so it inherits the group's authenticated
+    // admin stack + can:manageConnectors (R32) like every sibling.
+    Route::post('probe', [ApiRouteController::class, 'probe'])->name('probe');
+
     // Connectors
     Route::get('/', [ApiConnectorController::class, 'index'])->name('index');
     Route::post('/', [ApiConnectorController::class, 'store'])->name('store');

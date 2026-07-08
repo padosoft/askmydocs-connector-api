@@ -11,6 +11,7 @@ use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
@@ -226,6 +227,27 @@ final class ConnectorAdminService
         if (! $route->delete()) {
             throw new RuntimeException('Failed to delete route.');
         }
+    }
+
+    /**
+     * Ad-hoc "playground" probe — fire a raw, unauthenticated, NON-persisted live
+     * call and return the classified {@see TestResult}. No connector/route rows
+     * are written and no schema/tool is inferred: a read-only diagnostic behind
+     * `can:manageConnectors`. Tenant scoping (R30) is not applicable (nothing is
+     * stored); the surface stays admin-gated at the route/middleware level.
+     *
+     * @param  array<string,string>  $headers
+     * @param  array<string,mixed>  $query
+     * @param  array<string,mixed>|null  $body
+     */
+    public function probe(
+        HttpMethod $method,
+        string $url,
+        array $headers = [],
+        array $query = [],
+        ?array $body = null,
+    ): TestResult {
+        return $this->tester->probe($method, $url, $headers, $query, $body);
     }
 
     /**

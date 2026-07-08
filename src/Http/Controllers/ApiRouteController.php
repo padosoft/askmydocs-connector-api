@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
@@ -71,6 +72,26 @@ final class ApiRouteController extends Controller
         return response()->json(['deleted' => true]);
     }
 
+    /**
+     * Ad-hoc "playground" probe — fire a FREE, unauthenticated, NON-persisted
+     * live call ({method, url, headers, query, body}) and return the classified
+     * outcome. Like {@see test()} a failed/non-JSON call is a valid display
+     * outcome (HTTP 200, ok:false, R14); only a malformed request 422s. No route
+     * or connector is created.
+     */
+    public function probe(ProbeRequest $request): JsonResponse
+    {
+        $result = $this->service->probe(
+            $request->httpMethod(),
+            $request->targetUrl(),
+            $request->headerMap(),
+            $request->queryParams(),
+            $request->jsonBody(),
+        );
+
+        return response()->json($this->probePayload($result));
+    }
+
     public function test(TestRouteRequest $request, int $route): JsonResponse
     {
         $model = $this->service->findRoute($route);
@@ -129,6 +150,14 @@ final class ApiRouteController extends Controller
         $result = $this->service->tryRoute($model, $request->arguments());
 
         return response()->json(['result' => $result]);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function probePayload(TestResult $result): array
+    {
+        return $this->testPayload($result) + ['duration_ms' => $result->durationMs];
     }
 
     /**
