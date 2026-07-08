@@ -1,6 +1,6 @@
 {
     "name": "padosoft/askmydocs-connector-api",
-    "description": "API connector for AskMyDocs — turn any configured HTTP endpoint into a live LLM tool callable during chat (RAG + fresh data). Fase 1: live tools; Fase 2 (ingest) designed in.",
+    "description": "API connector for AskMyDocs — turn any configured HTTP endpoint into a live LLM tool callable during chat (RAG + fresh data). Phase 1: live tools; Phase 2 (ingest) designed in.",
     "type": "library",
     "license": "Apache-2.0",
     "keywords": [
@@ -35,13 +35,6 @@
         "phpstan/phpstan": "^2.0",
         "laravel/pint": "^1.18"
     },
-    "repositories": [
-        {
-            "type": "vcs",
-            "url": "https://github.com/padosoft/askmydocs-connector-base",
-            "comment": "Dev-time resolution of the not-yet-Packagist base package. Ignored when this library is installed as a dependency — the host root composer.json provides resolution."
-        }
-    ],
     "autoload": {
         "psr-4": { "Padosoft\\AskMyDocsConnectorApi\\": "src/" }
     },
