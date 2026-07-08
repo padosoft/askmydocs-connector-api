@@ -25,15 +25,18 @@ final class ApiConnectorTestCommand extends Command
 
     public function handle(ApiRouteTester $tester, TenantContext $tenants): int
     {
-        $tenants->set((string) $this->option('tenant'));
+        $tenant = $this->option('tenant');
+        $tenants->set(is_string($tenant) ? $tenant : 'default');
 
-        $route = ApiRoute::query()
-            ->forTenant($tenants->current())
+        $routeArg = $this->argument('route');
+        $routeRef = is_scalar($routeArg) ? (string) $routeArg : '';
+
+        $route = ApiRoute::forTenant($tenants->current())
             ->with('parameters')
-            ->find((int) $this->argument('route'));
+            ->find((int) $routeRef);
 
         if ($route === null) {
-            $this->error("Route [{$this->argument('route')}] not found for tenant [{$tenants->current()}].");
+            $this->error("Route [{$routeRef}] not found for tenant [{$tenants->current()}].");
 
             return self::FAILURE;
         }
@@ -59,16 +62,16 @@ final class ApiConnectorTestCommand extends Command
     }
 
     /**
-     * @return array<string,mixed>|null  null on invalid JSON
+     * @return array<string,mixed>|null null on invalid JSON
      */
     private function decodeArgs(): ?array
     {
         $raw = $this->option('args');
-        if ($raw === null || $raw === '') {
+        if (! is_string($raw) || $raw === '') {
             return [];
         }
 
-        $decoded = json_decode((string) $raw, true);
+        $decoded = json_decode($raw, true);
 
         return is_array($decoded) ? $decoded : null;
     }

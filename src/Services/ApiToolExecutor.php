@@ -42,8 +42,8 @@ final class ApiToolExecutor
 
     /**
      * @param  array<string,mixed>  $arguments  LLM-supplied tool arguments
-     * @param  array<string,mixed>  $context    {conversation_id?: int}
-     * @return array<string,mixed>  the tool_result handed back to the LLM
+     * @param  array<string,mixed>  $context  {conversation_id?: int}
+     * @return array<string,mixed> the tool_result handed back to the LLM
      */
     public function execute(ApiRoute $route, array $arguments, array $context = []): array
     {
@@ -124,7 +124,6 @@ final class ApiToolExecutor
     }
 
     /**
-     * @param  mixed  $body
      * @return array<string,mixed>
      */
     private function wrap(mixed $body): array
@@ -171,7 +170,6 @@ final class ApiToolExecutor
 
     /**
      * @param  array<string,mixed>  $context
-     * @param  mixed  $excerpt
      */
     private function log(
         ApiRoute $route,
@@ -187,7 +185,7 @@ final class ApiToolExecutor
                 'tenant_id' => $route->tenant_id,
                 'conversation_id' => isset($context['conversation_id']) ? (int) $context['conversation_id'] : null,
                 'api_route_id' => $route->id,
-                'request_params' => $plan?->loggableParams ?? [],
+                'request_params' => $plan->loggableParams ?? [],
                 'response_status' => $status,
                 'response_excerpt' => is_array($excerpt) ? $excerpt : null,
                 'latency_ms' => $latencyMs,

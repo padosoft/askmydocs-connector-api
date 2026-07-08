@@ -90,7 +90,7 @@ final class ApiRouteTester
     {
         $flat = [];
         foreach ($headers as $name => $values) {
-            $flat[$name] = is_array($values) ? implode(', ', $values) : (string) $values;
+            $flat[$name] = implode(', ', $values);
         }
 
         return $flat;

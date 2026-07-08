@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Padosoft\AskMyDocsConnectorApi\Models;
 
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
 
@@ -22,6 +24,12 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property int|null $default_auth_profile_id
  * @property array<string,string>|null $headers
  * @property bool $is_active
+ * @property-read Carbon|null $created_at
+ * @property-read Carbon|null $updated_at
+ * @property-read Collection<int,ApiRoute> $routes
+ * @property-read Collection<int,ApiAuthProfile> $authProfiles
+ *
+ * @method static \Illuminate\Database\Eloquent\Builder<static> forTenant(string $tenantId)
  */
 class ApiConnector extends Model
 {
@@ -40,6 +48,7 @@ class ApiConnector extends Model
         'is_active',
     ];
 
+    /** @var array<string, string> */
     protected $casts = [
         'headers' => 'array',
         'is_active' => 'boolean',
@@ -75,7 +84,11 @@ class ApiConnector extends Model
         return (string) ($this->project_key ?? '');
     }
 
-    /** Static headers shared by every route (defaults that a route may extend). */
+    /**
+     * Static headers shared by every route (defaults that a route may extend).
+     *
+     * @return array<string,string>
+     */
     public function sharedHeaders(): array
     {
         return is_array($this->headers) ? $this->headers : [];

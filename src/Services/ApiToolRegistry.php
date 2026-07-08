@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Padosoft\AskMyDocsConnectorApi\Services;
 
+use Illuminate\Database\Eloquent\Builder;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
 
 /**
  * Lists the API tools available to a conversation and resolves a tool name back
@@ -23,9 +26,9 @@ final class ApiToolRegistry
      */
     public function activeToolsForTenant(string $tenantId, ?string $projectKey = null): array
     {
-        $routes = $this->baseQuery($tenantId, $projectKey)
-            ->orderBy('id')
-            ->get();
+        $query = $this->baseQuery($tenantId, $projectKey);
+        $query->orderBy('id');
+        $routes = $query->get();
 
         $tools = [];
         $seen = [];
@@ -65,19 +68,25 @@ final class ApiToolRegistry
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Builder<ApiRoute>
+     * @return Builder<ApiRoute>
      */
-    private function baseQuery(string $tenantId, ?string $projectKey): \Illuminate\Database\Eloquent\Builder
+    private function baseQuery(string $tenantId, ?string $projectKey): Builder
     {
         $projectScopes = $projectKey === null || $projectKey === ''
             ? ['']
             : ['', $projectKey];
 
-        return ApiRoute::query()
-            ->forTenant($tenantId)
-            ->exposesTool()
-            ->whereIn('project_key', $projectScopes)
-            ->whereHas('connector', fn ($q) => $q->where('is_active', true));
+        // forTenant() (R30) is the resolvable static head; exposesTool()'s
+        // filter is inlined here because a local scope is not resolvable on the
+        // Builder mid-chain — mirror ApiRoute::scopeExposesTool() exactly.
+        $query = ApiRoute::forTenant($tenantId);
+        $query
+            ->whereHas('connector', fn ($q) => $q->where('is_active', true))
+            ->where('status', RouteStatus::Active->value)
+            ->whereIn('mode', [RouteMode::Tool->value, RouteMode::Both->value])
+            ->whereIn('project_key', $projectScopes);
+
+        return $query;
     }
 
     /**

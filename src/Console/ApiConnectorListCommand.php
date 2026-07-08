@@ -21,7 +21,8 @@ final class ApiConnectorListCommand extends Command
 
     public function handle(ConnectorAdminService $service, TenantContext $tenants): int
     {
-        $tenants->set((string) $this->option('tenant'));
+        $tenant = $this->option('tenant');
+        $tenants->set(is_string($tenant) ? $tenant : 'default');
 
         $connectors = $service->listConnectors();
         if ($connectors->isEmpty()) {

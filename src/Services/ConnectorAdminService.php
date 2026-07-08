@@ -43,22 +43,19 @@ final class ConnectorAdminService
 
     public function findConnector(int $id): ApiConnector
     {
-        return ApiConnector::query()
-            ->forTenant($this->currentTenant())
+        return ApiConnector::forTenant($this->currentTenant())
             ->findOrFail($id);
     }
 
     public function findAuthProfile(int $id): ApiAuthProfile
     {
-        return ApiAuthProfile::query()
-            ->forTenant($this->currentTenant())
+        return ApiAuthProfile::forTenant($this->currentTenant())
             ->findOrFail($id);
     }
 
     public function findRoute(int $id): ApiRoute
     {
-        return ApiRoute::query()
-            ->forTenant($this->currentTenant())
+        return ApiRoute::forTenant($this->currentTenant())
             ->findOrFail($id);
     }
 
@@ -71,11 +68,10 @@ final class ConnectorAdminService
      */
     public function listConnectors(): Collection
     {
-        return ApiConnector::query()
-            ->forTenant($this->currentTenant())
-            ->with('routes')
-            ->orderBy('name')
-            ->get();
+        $query = ApiConnector::forTenant($this->currentTenant())->with('routes');
+        $query->orderBy('name');
+
+        return $query->get();
     }
 
     /**
@@ -261,7 +257,7 @@ final class ConnectorAdminService
         $route->input_schema = $inputSchema;
         $route->output_schema = $outputSchema;
         $route->tool_definition = $definition;
-        if ($slugUnset && isset($definition['name']) && is_string($definition['name'])) {
+        if ($slugUnset) {
             $route->slug = $definition['name'];
         }
         $route->status = RouteStatus::Tested;
@@ -475,8 +471,7 @@ final class ConnectorAdminService
 
     private function connectorOf(ApiRoute $route): ApiConnector
     {
-        return ApiConnector::query()
-            ->forTenant($route->tenant_id)
+        return ApiConnector::forTenant($route->tenant_id)
             ->findOrFail($route->api_connector_id);
     }
 
@@ -497,7 +492,11 @@ final class ConnectorAdminService
             return;
         }
 
-        $hasRoutes = $connector->routes()->forTenant($connector->tenant_id)->exists();
+        // Equivalent to $connector->routes()->forTenant(...): the relation scopes
+        // by api_connector_id; forTenant() is only resolvable as a static head.
+        $hasRoutes = ApiRoute::forTenant($connector->tenant_id)
+            ->where('api_connector_id', $connector->id)
+            ->exists();
         if ($hasRoutes) {
             throw new RuntimeException(
                 'Cannot change project_key while the connector has routes: it would desync the route project scope. Remove the routes first.',

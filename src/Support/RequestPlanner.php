@@ -7,6 +7,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Support;
 use Padosoft\AskMyDocsConnectorApi\Exceptions\ApiConnectorException;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
 
 /**
  * Builds a {@see RequestPlan} from a route, its declared parameters and the
@@ -87,9 +88,9 @@ final class RequestPlanner
 
     /**
      * @param  array<string,mixed>  $arguments
-     * @return array{0: mixed, 1: bool}  [value, present]
+     * @return array{0: mixed, 1: bool} [value, present]
      */
-    private function resolveValue(object $param, array $arguments, ?ApiAuthProfile $authProfile): array
+    private function resolveValue(ApiRouteParameter $param, array $arguments, ?ApiAuthProfile $authProfile): array
     {
         return match ($param->source) {
             ParamSource::Llm => array_key_exists($param->name, $arguments)
@@ -105,7 +106,7 @@ final class RequestPlanner
     /**
      * @return array{0: mixed, 1: bool}
      */
-    private function resolveSecret(object $param, ?ApiAuthProfile $authProfile): array
+    private function resolveSecret(ApiRouteParameter $param, ?ApiAuthProfile $authProfile): array
     {
         if ($authProfile === null || ! is_string($param->secret_ref) || $param->secret_ref === '') {
             return [null, false];

@@ -66,10 +66,10 @@ final class ToolDefinitionGenerator
         }
 
         $out = [];
-        if (isset($suggestion['name']) && is_string($suggestion['name']) && $suggestion['name'] !== '') {
+        if (isset($suggestion['name']) && $suggestion['name'] !== '') {
             $out['name'] = $suggestion['name'];
         }
-        if (isset($suggestion['description']) && is_string($suggestion['description']) && $suggestion['description'] !== '') {
+        if (isset($suggestion['description']) && $suggestion['description'] !== '') {
             $out['description'] = $suggestion['description'];
         }
 

@@ -42,6 +42,9 @@ final class OAuth2ClientCredentialsAuth implements AuthApplier
         return new AuthMaterial(headers: [$headerName => 'Bearer '.$token]);
     }
 
+    /**
+     * @param  array<string,mixed>  $config
+     */
     private function token(int $profileId, string $tokenUrl, string $clientId, string $clientSecret, array $config): string
     {
         $scope = (string) ($config['scope'] ?? '');
@@ -81,7 +84,7 @@ final class OAuth2ClientCredentialsAuth implements AuthApplier
             throw new ApiConnectorException("OAuth2 token endpoint did not return an access_token for profile {$profileId}.");
         }
 
-        $expiresIn = is_array($data) && isset($data['expires_in']) ? (int) $data['expires_in'] : 300;
+        $expiresIn = isset($data['expires_in']) ? (int) $data['expires_in'] : 300;
         $ttl = max(30, $expiresIn - 30);
         Cache::put($cacheKey, $token, $ttl);
 

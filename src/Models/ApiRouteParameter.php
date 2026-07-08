@@ -47,6 +47,7 @@ class ApiRouteParameter extends Model
         'sort_order',
     ];
 
+    /** @var array<string, string> */
     protected $casts = [
         'location' => ParamLocation::class,
         'source' => ParamSource::class,

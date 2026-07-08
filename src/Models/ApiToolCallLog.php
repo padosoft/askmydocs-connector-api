@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
 
 /**
@@ -22,7 +23,7 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property array<string,mixed>|null $response_excerpt
  * @property int|null $latency_ms
  * @property string|null $error
- * @property \Illuminate\Support\Carbon|null $created_at
+ * @property Carbon|null $created_at
  */
 class ApiToolCallLog extends Model
 {
@@ -44,6 +45,7 @@ class ApiToolCallLog extends Model
         'created_at',
     ];
 
+    /** @var array<string, string> */
     protected $casts = [
         'request_params' => 'array',
         'response_excerpt' => 'array',

@@ -47,7 +47,7 @@ final class SchemaInferrer
         return [
             'type' => 'object',
             'properties' => $properties,
-            'required' => array_values($required),
+            'required' => $required,
         ];
     }
 

@@ -19,8 +19,10 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property string $tenant_id
  * @property int $api_connector_id
  * @property AuthType $type
- * @property array<string,mixed>|null $credentials  decrypted on read
+ * @property array<string,mixed>|null $credentials decrypted on read
  * @property array<string,mixed>|null $config
+ *
+ * @method static \Illuminate\Database\Eloquent\Builder<static> forTenant(string $tenantId)
  */
 class ApiAuthProfile extends Model
 {
@@ -36,6 +38,7 @@ class ApiAuthProfile extends Model
         'config',
     ];
 
+    /** @var array<string, string> */
     protected $casts = [
         'type' => AuthType::class,
         'credentials' => 'encrypted:array',
