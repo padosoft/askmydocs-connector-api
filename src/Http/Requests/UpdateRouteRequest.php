@@ -7,6 +7,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\Concerns\ValidatesRouteParameters;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 
@@ -37,6 +38,8 @@ final class UpdateRouteRequest extends FormRequest
             'url' => ['sometimes', 'string', 'max:2048'],
             'auth_profile_id' => ['sometimes', 'nullable', 'integer'],
             'mode' => ['sometimes', Rule::in(RouteMode::values())],
+            'endpoint_type' => ['sometimes', 'nullable', Rule::in(['auto', EndpointType::List->value, EndpointType::Detail->value])],
+            'items_path' => ['sometimes', 'nullable', 'string', 'max:255'],
             'timeout_ms' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'cache_ttl_s' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'rate_limit' => ['sometimes', 'nullable', 'integer', 'min:0'],

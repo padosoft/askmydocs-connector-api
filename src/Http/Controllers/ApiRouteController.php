@@ -12,7 +12,9 @@ use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\UpdateRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Resources\ApiRouteResource;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use RuntimeException;
 
@@ -107,7 +109,43 @@ final class ApiRouteController extends Controller
             'tool_definition' => $tested->tool_definition,
             'input_schema' => $tested->input_schema,
             'output_schema' => $tested->output_schema,
+            'endpoint_type' => $tested->endpoint_type->value,
+            'items_path' => $tested->items_path,
+            'item_schema' => $this->itemSchema($tested),
         ]);
+    }
+
+    /**
+     * The JSON schema of a single LIST item, extracted from the inferred
+     * output_schema at `items_path` — the shape the relation field-picker maps
+     * from. Null for non-list routes or when the schema can't be walked.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function itemSchema(ApiRoute $route): ?array
+    {
+        if ($route->endpoint_type !== EndpointType::List) {
+            return null;
+        }
+
+        $node = $route->output_schema;
+        if (! is_array($node)) {
+            return null;
+        }
+
+        // Walk the envelope dot-path (e.g. 'data' or 'result.orders'); '' or null
+        // means the whole body IS the item array (top-level list).
+        $path = (string) ($route->items_path ?? '');
+        if ($path !== '') {
+            foreach (explode('.', $path) as $segment) {
+                $node = $node['properties'][$segment] ?? null;
+                if (! is_array($node)) {
+                    return null;
+                }
+            }
+        }
+
+        return is_array($node['items'] ?? null) ? $node['items'] : null;
     }
 
     public function regenerateDescription(int $route): JsonResponse

@@ -94,4 +94,42 @@ final class ConnectorCrudTest extends TestCase
 
         $this->assertDatabaseMissing('api_connectors', ['id' => $created]);
     }
+
+    public function test_create_route_accepts_an_endpoint_type_override_and_exposes_it(): void
+    {
+        $this->app->make(TenantContext::class)->set('acme');
+        $connectorId = $this->postJson(self::PREFIX, ['name' => 'C1'])->assertStatus(201)->json('data.id');
+
+        $created = $this->postJson(self::PREFIX."/{$connectorId}/routes", [
+            'name' => 'User detail',
+            'http_method' => 'GET',
+            'url' => 'https://api.example.test/users/{id}',
+            'mode' => 'tool',
+            'endpoint_type' => 'detail',
+        ])->assertStatus(201);
+
+        // Resource carries the taxonomy; the explicit choice is locked.
+        $created->assertJsonPath('data.endpoint_type', 'detail');
+        $created->assertJsonPath('data.endpoint_type_locked', true);
+        $this->assertDatabaseHas('api_routes', [
+            'id' => $created->json('data.id'),
+            'endpoint_type' => 'detail',
+            'endpoint_type_locked' => true,
+        ]);
+    }
+
+    public function test_create_route_rejects_an_invalid_endpoint_type(): void
+    {
+        $this->app->make(TenantContext::class)->set('acme');
+        $connectorId = $this->postJson(self::PREFIX, ['name' => 'C1'])->assertStatus(201)->json('data.id');
+
+        // 'unknown' is not operator-settable; only auto|list|detail are accepted.
+        $this->postJson(self::PREFIX."/{$connectorId}/routes", [
+            'name' => 'Bad',
+            'http_method' => 'GET',
+            'url' => 'https://api.example.test/x',
+            'mode' => 'tool',
+            'endpoint_type' => 'unknown',
+        ])->assertStatus(422)->assertJsonValidationErrors('endpoint_type');
+    }
 }

@@ -60,6 +60,7 @@ final class ApiConnectorResource extends JsonResource
             'slug' => $route->slug,
             'status' => $route->status->value,
             'mode' => $route->mode->value,
+            'endpoint_type' => $route->endpoint_type->value,
             'http_method' => $route->http_method->value,
             'last_test_status' => $route->last_test_status,
         ];
