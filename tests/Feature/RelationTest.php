@@ -224,6 +224,51 @@ final class RelationTest extends TestCase
         }
     }
 
+    public function test_creating_a_relation_annotates_both_peers_tool_definitions(): void
+    {
+        $this->fakeEndpoints();
+        // Both routes must be tested first so they have an input_schema to annotate.
+        $this->service->testRoute($this->list->fresh(['parameters']), []);
+        $this->service->testRoute($this->detail->fresh(['parameters']), ['id' => 1]);
+
+        $this->service->createRelation($this->connector, [
+            'list_route_id' => $this->list->id,
+            'detail_route_id' => $this->detail->id,
+            'field_map' => [['from' => 'id', 'to_param' => 'id']],
+        ]);
+
+        // Detail: the `id` param description learns its source; the tool description
+        // tells the model to call the list tool first.
+        $detail = $this->detail->fresh();
+        $detailDef = $detail->tool_definition;
+        $this->assertStringContainsString(
+            'list',
+            $detailDef['input_schema']['properties']['id']['description'] ?? '',
+        );
+        $this->assertStringContainsString('Call the', $detailDef['description'] ?? '');
+
+        // List: its description advertises the drill-down.
+        $listDef = $this->list->fresh()->tool_definition;
+        $this->assertStringContainsString('drilled into', $listDef['description'] ?? '');
+    }
+
+    public function test_deleting_a_relation_drops_the_annotations(): void
+    {
+        $this->fakeEndpoints();
+        $this->service->testRoute($this->list->fresh(['parameters']), []);
+        $this->service->testRoute($this->detail->fresh(['parameters']), ['id' => 1]);
+        $relation = $this->service->createRelation($this->connector, [
+            'list_route_id' => $this->list->id,
+            'detail_route_id' => $this->detail->id,
+            'field_map' => [['from' => 'id', 'to_param' => 'id']],
+        ]);
+
+        $this->service->deleteRelation($relation);
+
+        $listDef = $this->list->fresh()->tool_definition;
+        $this->assertStringNotContainsString('drilled into', $listDef['description'] ?? '');
+    }
+
     public function test_deleting_a_route_removes_its_relations(): void
     {
         $relation = $this->service->createRelation($this->connector, [

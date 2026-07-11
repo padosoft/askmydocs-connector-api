@@ -294,7 +294,12 @@ final class ConnectorAdminService
 
         $inputSchema = $this->schemaInferrer->inferInput($route->parameters);
         $outputSchema = $this->schemaInferrer->inferOutput($result->body);
-        $definition = $this->toolGenerator->generate($route, $inputSchema, $result->body);
+        $definition = $this->toolGenerator->generate(
+            $route,
+            $inputSchema,
+            $result->body,
+            $this->relationContextFor($route),
+        );
 
         $slugUnset = $route->slug === '' || $route->slug === $this->toolGenerator->normalizeSlug($route->name);
 
@@ -337,7 +342,12 @@ final class ConnectorAdminService
             throw new RuntimeException('Test the route before generating its description.', 422);
         }
 
-        $definition = $this->toolGenerator->generate($route, $inputSchema, $route->last_test_payload);
+        $definition = $this->toolGenerator->generate(
+            $route,
+            $inputSchema,
+            $route->last_test_payload,
+            $this->relationContextFor($route),
+        );
         $route->tool_definition = $definition;
         $this->persist($route);
 
@@ -421,6 +431,9 @@ final class ConnectorAdminService
         $relation->sort_order = (int) ($data['sort_order'] ?? 0);
         $this->persist($relation);
 
+        // Re-annotate both peers' tool definitions so the LLM chains them (Fase 3).
+        $this->refreshToolDefinitionsByIds([$list->id, $detail->id]);
+
         return $this->loadRelation($relation);
     }
 
@@ -433,6 +446,9 @@ final class ConnectorAdminService
     {
         $connector = ApiConnector::forTenant($relation->tenant_id)
             ->findOrFail($relation->api_connector_id);
+
+        // Peers before the change — re-annotated too if the pair is repointed.
+        $previousPeerIds = [$relation->list_route_id, $relation->detail_route_id];
 
         $list = array_key_exists('list_route_id', $data)
             ? $this->findRoute((int) $data['list_route_id'])
@@ -460,14 +476,20 @@ final class ConnectorAdminService
         }
         $this->persist($relation);
 
+        $this->refreshToolDefinitionsByIds([...$previousPeerIds, $list->id, $detail->id]);
+
         return $this->loadRelation($relation);
     }
 
     public function deleteRelation(ApiRouteRelation $relation): void
     {
+        $peerIds = [$relation->list_route_id, $relation->detail_route_id];
         if (! $relation->delete()) {
             throw new RuntimeException('Failed to delete relation.');
         }
+
+        // The chain guidance must drop from both peers' descriptions.
+        $this->refreshToolDefinitionsByIds($peerIds);
     }
 
     /**
@@ -689,6 +711,73 @@ final class ConnectorAdminService
     private function loadRelation(ApiRouteRelation $relation): ApiRouteRelation
     {
         return $relation->fresh(['listRoute', 'detailRoute']) ?? $relation;
+    }
+
+    /**
+     * The List→Detail relation context of a route (Fase 3): `inbound` = relations
+     * where it is the DETAIL (each with the feeding list slug + field_map),
+     * `outbound` = relations where it is the LIST (each with the drillable detail
+     * slug). Feeds {@see ToolDefinitionGenerator::generate()} so the tool
+     * descriptions guide the LLM to chain list→detail. Tenant-scoped (R30).
+     *
+     * @return array{inbound: list<array{list_slug: string, field_map: mixed}>, outbound: list<array{detail_slug: string}>}
+     */
+    private function relationContextFor(ApiRoute $route): array
+    {
+        $tenant = $route->tenant_id;
+
+        $inbound = [];
+        $inboundRelations = ApiRouteRelation::forTenant($tenant)
+            ->where('detail_route_id', $route->id)
+            ->with('listRoute:id,slug')
+            ->get();
+        foreach ($inboundRelations as $relation) {
+            $inbound[] = ['list_slug' => $relation->listRoute->slug, 'field_map' => $relation->field_map];
+        }
+
+        $outbound = [];
+        $outboundRelations = ApiRouteRelation::forTenant($tenant)
+            ->where('list_route_id', $route->id)
+            ->with('detailRoute:id,slug')
+            ->get();
+        foreach ($outboundRelations as $relation) {
+            $outbound[] = ['detail_slug' => $relation->detailRoute->slug];
+        }
+
+        return ['inbound' => $inbound, 'outbound' => $outbound];
+    }
+
+    /**
+     * Re-annotate the tool_definition of each given route from its current
+     * relation context. Skips routes that are missing (cross-tenant / deleted) or
+     * not yet tested (no input_schema to annotate). Side-effect only — never
+     * throws for a stale peer.
+     *
+     * @param  list<int>  $routeIds
+     */
+    private function refreshToolDefinitionsByIds(array $routeIds): void
+    {
+        foreach (array_unique(array_filter($routeIds)) as $id) {
+            $route = ApiRoute::forTenant($this->currentTenant())
+                ->with('parameters')
+                ->find((int) $id);
+            if ($route === null) {
+                continue;
+            }
+
+            $inputSchema = is_array($route->input_schema) ? $route->input_schema : null;
+            if ($inputSchema === null) {
+                continue; // never tested — nothing to annotate yet
+            }
+
+            $route->tool_definition = $this->toolGenerator->generate(
+                $route,
+                $inputSchema,
+                $route->last_test_payload,
+                $this->relationContextFor($route),
+            );
+            $this->persist($route);
+        }
     }
 
     /**
