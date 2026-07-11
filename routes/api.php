@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiAuthProfileController;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiConnectorController;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteController;
+use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteRelationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -70,4 +71,18 @@ Route::name('api-connectors.')->group(function (): void {
         ->whereNumber('route')->name('routes.disable');
     Route::post('routes/{route}/try', [ApiRouteController::class, 'tryTool'])
         ->whereNumber('route')->name('routes.try');
+
+    // Relations (List → Detail) — spec Obj 3
+    Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])
+        ->whereNumber('connector')->name('relations.index');
+    Route::post('{connector}/relations', [ApiRouteRelationController::class, 'store'])
+        ->whereNumber('connector')->name('relations.store');
+    Route::get('relations/{relation}', [ApiRouteRelationController::class, 'show'])
+        ->whereNumber('relation')->name('relations.show');
+    Route::patch('relations/{relation}', [ApiRouteRelationController::class, 'update'])
+        ->whereNumber('relation')->name('relations.update');
+    Route::delete('relations/{relation}', [ApiRouteRelationController::class, 'destroy'])
+        ->whereNumber('relation')->name('relations.destroy');
+    Route::post('relations/{relation}/drill', [ApiRouteRelationController::class, 'drill'])
+        ->whereNumber('relation')->name('relations.drill');
 });

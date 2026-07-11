@@ -38,7 +38,7 @@ final class ApiConnectorController extends Controller
     public function show(int $connector): JsonResponse
     {
         $model = $this->service->findConnector($connector);
-        $model->load(['routes', 'authProfiles']);
+        $model->load(['routes', 'authProfiles', 'relations.listRoute:id,slug', 'relations.detailRoute:id,slug']);
 
         return (new ApiConnectorResource($model))->response();
     }

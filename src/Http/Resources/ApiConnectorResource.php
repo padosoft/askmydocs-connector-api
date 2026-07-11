@@ -42,6 +42,9 @@ final class ApiConnectorResource extends JsonResource
             'auth_profiles' => ApiAuthProfileResource::collection(
                 $this->whenLoaded('authProfiles')
             ),
+            'relations' => ApiRouteRelationResource::collection(
+                $this->whenLoaded('relations')
+            ),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

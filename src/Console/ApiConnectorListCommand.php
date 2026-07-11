@@ -52,6 +52,16 @@ final class ApiConnectorListCommand extends Command
             if ($rows !== []) {
                 $this->table(['slug', 'method', 'type', 'status', 'mode', 'last_test'], $rows);
             }
+
+            foreach ($connector->relations as $relation) {
+                $this->line(sprintf(
+                    '  ↳ %s → %s (%d field map%s)',
+                    $relation->listRoute->slug,
+                    $relation->detailRoute->slug,
+                    count($relation->field_map),
+                    count($relation->field_map) === 1 ? '' : 's',
+                ));
+            }
         }
 
         return self::SUCCESS;
