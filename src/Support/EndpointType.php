@@ -7,11 +7,11 @@ namespace Padosoft\AskMyDocsConnectorApi\Support;
 /**
  * Response-shape taxonomy of a route — the "Lista vs Dettaglio" discriminator.
  *
- * This is an axis ORTHOGONAL to {@see RouteMode} (tool|ingest|both, the delivery
- * axis) and {@see RouteStatus}. It classifies what the endpoint RETURNS:
+ * This is an axis ORTHOGONAL to `RouteMode` (tool|ingest|both, the delivery
+ * axis) and `RouteStatus`. It classifies what the endpoint RETURNS:
  *   - List   → a collection (top-level JSON array, or an array-of-objects nested
  *              under an envelope key like `data`/`results`). Drillable into a
- *              detail via an {@see \Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation}.
+ *              detail via an `ApiRouteRelation`.
  *   - Detail → a single resource object.
  *   - Unknown → not yet detected (legacy rows, or an ambiguous/non-JSON body).
  *
@@ -19,7 +19,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Support;
  * single object ⇒ Detail); the operator can override and lock the choice.
  * `Unknown` keeps the enum cast total (no nullable-enum handling) and is the
  * honest default for a route that has never been tested — it must NEVER gate
- * tool exposure ({@see ApiRoute::scopeExposesTool} stays on mode+status only).
+ * tool exposure (`ApiRoute::scopeExposesTool` stays on mode+status only).
  */
 enum EndpointType: string
 {

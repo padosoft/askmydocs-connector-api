@@ -11,6 +11,7 @@ use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
@@ -282,6 +283,16 @@ final class ConnectorAdminService
         if ($slugUnset) {
             $route->slug = $definition['name'];
         }
+
+        // Auto-detect the endpoint taxonomy (Lista vs Dettaglio) from the live
+        // response — UNLESS the operator locked an explicit override, in which
+        // case their choice (and any manual items_path) is preserved.
+        if (! $route->endpoint_type_locked) {
+            $classification = $this->schemaInferrer->classifyEndpoint($result->body);
+            $route->endpoint_type = $classification['type'];
+            $route->items_path = $classification['items_path'];
+        }
+
         $route->status = RouteStatus::Tested;
         $this->persist($route);
 
@@ -393,8 +404,40 @@ final class ConnectorAdminService
         if (array_key_exists('output_transform', $data)) {
             $route->output_transform = $this->arrayOrNull($data['output_transform']);
         }
+        $this->applyEndpointType($route, $data);
 
         $route->slug = $this->resolveSlug($data, $route);
+    }
+
+    /**
+     * Apply the operator's endpoint-taxonomy choice.
+     *
+     * The wire contract is `endpoint_type ∈ {auto, list, detail}`:
+     *  - `auto` (or null/'') UNLOCKS detection — testRoute owns endpoint_type +
+     *    items_path from the next live response.
+     *  - `list`/`detail` LOCK an explicit override the detector must not clobber.
+     * `items_path` is only meaningful for a list; a supplied value is stored
+     * verbatim ('' = top-level array).
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private function applyEndpointType(ApiRoute $route, array $data): void
+    {
+        if (array_key_exists('endpoint_type', $data)) {
+            $choice = $data['endpoint_type'];
+            if ($choice === EndpointType::List->value || $choice === EndpointType::Detail->value) {
+                $route->endpoint_type = EndpointType::from($choice);
+                $route->endpoint_type_locked = true;
+            } else {
+                // 'auto' / null / '' / anything else → hand control back to the detector.
+                $route->endpoint_type_locked = false;
+            }
+        }
+
+        if (array_key_exists('items_path', $data)) {
+            $value = $data['items_path'];
+            $route->items_path = is_string($value) ? $value : null;
+        }
     }
 
     /**

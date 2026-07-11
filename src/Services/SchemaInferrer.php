@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Padosoft\AskMyDocsConnectorApi\Services;
 
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 
 /**
@@ -57,6 +58,70 @@ final class SchemaInferrer
     public function inferOutput(mixed $body): array
     {
         return $this->describe($body, 0);
+    }
+
+    /**
+     * Conventional envelope keys under which an API nests its item collection.
+     * A property with one of these names holding a JSON array is treated as the
+     * list's items, in this precedence order.
+     */
+    private const LIST_ENVELOPE_KEYS = ['data', 'items', 'results', 'records', 'rows', 'list'];
+
+    /**
+     * Classify a decoded response body as a list (collection) vs a detail
+     * (single resource), and — for a list — the dot-path to the item array.
+     *
+     * Rules (auto-detection; the operator can override + lock):
+     *  - non-array (scalar / non-JSON) ⇒ Unknown.
+     *  - top-level JSON array ⇒ List, items_path '' (the whole body is the
+     *    collection — even an array of scalars, though not drillable).
+     *  - object with a conventional envelope key ({@see LIST_ENVELOPE_KEYS})
+     *    holding an array ⇒ List, items_path = that key. This deliberately checks
+     *    the value IS a list, so `{data:{…}}` (a wrapped single resource) stays a
+     *    Detail.
+     *  - object with exactly ONE non-empty array-of-objects property ⇒ List,
+     *    items_path = that key.
+     *  - object with several ambiguous array-of-objects properties ⇒ Unknown
+     *    (force an operator override rather than guessing).
+     *  - any other object ⇒ Detail. (A deeply nested collection like
+     *    `{result:{orders:[…]}}` returns Detail; the operator types the dot-path
+     *    `result.orders` into items_path to correct it.)
+     *
+     * @return array{type: EndpointType, items_path: string|null}
+     */
+    public function classifyEndpoint(mixed $body): array
+    {
+        if (! is_array($body)) {
+            return ['type' => EndpointType::Unknown, 'items_path' => null];
+        }
+
+        if (array_is_list($body)) {
+            return ['type' => EndpointType::List, 'items_path' => ''];
+        }
+
+        foreach (self::LIST_ENVELOPE_KEYS as $key) {
+            if (array_key_exists($key, $body) && is_array($body[$key]) && array_is_list($body[$key])) {
+                return ['type' => EndpointType::List, 'items_path' => $key];
+            }
+        }
+
+        $objectListKeys = [];
+        foreach ($body as $key => $value) {
+            if (is_array($value) && array_is_list($value) && $value !== []
+                && is_array($value[0]) && ! array_is_list($value[0])) {
+                $objectListKeys[] = (string) $key;
+            }
+        }
+
+        if (count($objectListKeys) === 1) {
+            return ['type' => EndpointType::List, 'items_path' => $objectListKeys[0]];
+        }
+
+        if (count($objectListKeys) > 1) {
+            return ['type' => EndpointType::Unknown, 'items_path' => null];
+        }
+
+        return ['type' => EndpointType::Detail, 'items_path' => null];
     }
 
     /**
