@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
@@ -35,6 +36,9 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property array<string,mixed>|null $output_transform
  * @property RouteMode $mode
  * @property RouteStatus $status
+ * @property EndpointType $endpoint_type
+ * @property bool $endpoint_type_locked
+ * @property string|null $items_path
  * @property int|null $timeout_ms
  * @property int|null $cache_ttl_s
  * @property int|null $rate_limit
@@ -73,6 +77,9 @@ class ApiRoute extends Model
         'output_transform',
         'mode',
         'status',
+        'endpoint_type',
+        'endpoint_type_locked',
+        'items_path',
         'timeout_ms',
         'cache_ttl_s',
         'rate_limit',
@@ -86,6 +93,9 @@ class ApiRoute extends Model
         'http_method' => HttpMethod::class,
         'mode' => RouteMode::class,
         'status' => RouteStatus::class,
+        'endpoint_type' => EndpointType::class,
+        'endpoint_type_locked' => 'boolean',
+        'items_path' => 'string',
         'input_schema' => 'array',
         'output_schema' => 'array',
         'param_mapping' => 'array',
@@ -148,5 +158,17 @@ class ApiRoute extends Model
         }
 
         return $this->connector?->defaultAuthProfile();
+    }
+
+    /** Whether this route returns a collection (drillable into a detail). */
+    public function isList(): bool
+    {
+        return $this->endpoint_type === EndpointType::List;
+    }
+
+    /** Whether this route returns a single resource object. */
+    public function isDetail(): bool
+    {
+        return $this->endpoint_type === EndpointType::Detail;
     }
 }
