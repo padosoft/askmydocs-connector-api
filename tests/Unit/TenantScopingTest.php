@@ -9,6 +9,7 @@ use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiToolCallLog;
 use Padosoft\AskMyDocsConnectorApi\Tests\TestCase;
 use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
@@ -33,6 +34,7 @@ final class TenantScopingTest extends TestCase
             'ApiRoute' => [ApiRoute::class],
             'ApiRouteParameter' => [ApiRouteParameter::class],
             'ApiToolCallLog' => [ApiToolCallLog::class],
+            'ApiRouteRelation' => [ApiRouteRelation::class],
         ];
     }
 
@@ -73,6 +75,7 @@ final class TenantScopingTest extends TestCase
             'api_routes' => ['2026_06_30_000003_create_api_routes_table.php'],
             'api_route_parameters' => ['2026_06_30_000004_create_api_route_parameters_table.php'],
             'api_tool_call_logs' => ['2026_06_30_000005_create_api_tool_call_logs_table.php'],
+            'api_route_relations' => ['2026_07_11_000002_create_api_route_relations_table.php'],
         ];
     }
 

@@ -28,6 +28,7 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property-read Carbon|null $updated_at
  * @property-read Collection<int,ApiRoute> $routes
  * @property-read Collection<int,ApiAuthProfile> $authProfiles
+ * @property-read Collection<int,ApiRouteRelation> $relations
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> forTenant(string $tenantId)
  */
@@ -65,6 +66,12 @@ class ApiConnector extends Model
     public function authProfiles(): HasMany
     {
         return $this->hasMany(ApiAuthProfile::class);
+    }
+
+    /** @return HasMany<ApiRouteRelation, $this> */
+    public function relations(): HasMany
+    {
+        return $this->hasMany(ApiRouteRelation::class);
     }
 
     public function defaultAuthProfile(): ?ApiAuthProfile

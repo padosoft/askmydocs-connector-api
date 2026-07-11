@@ -50,6 +50,8 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property-read ApiConnector|null $connector
  * @property-read Collection<int,ApiRouteParameter> $parameters
  * @property-read Collection<int,ApiToolCallLog> $callLogs
+ * @property-read Collection<int,ApiRouteRelation> $listRelations
+ * @property-read Collection<int,ApiRouteRelation> $detailRelations
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> forTenant(string $tenantId)
  * @method static \Illuminate\Database\Eloquent\Builder<static> exposesTool()
@@ -128,6 +130,26 @@ class ApiRoute extends Model
     public function callLogs(): HasMany
     {
         return $this->hasMany(ApiToolCallLog::class);
+    }
+
+    /**
+     * Relations where THIS route is the list side (drill-downs it offers).
+     *
+     * @return HasMany<ApiRouteRelation, $this>
+     */
+    public function listRelations(): HasMany
+    {
+        return $this->hasMany(ApiRouteRelation::class, 'list_route_id');
+    }
+
+    /**
+     * Relations where THIS route is the detail side (lists that feed it).
+     *
+     * @return HasMany<ApiRouteRelation, $this>
+     */
+    public function detailRelations(): HasMany
+    {
+        return $this->hasMany(ApiRouteRelation::class, 'detail_route_id');
     }
 
     /**
