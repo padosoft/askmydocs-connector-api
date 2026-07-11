@@ -45,6 +45,20 @@ final class ApiRouteTester
     }
 
     /**
+     * Run the SAME real call as {@see test()} (auth + RequestPlanner + UrlGuard
+     * SSRF + dispatch + JSON classification) but persist NOTHING: no `last_test_*`
+     * clobber, no rate-limit, no cache. Used by the list→detail drill-test, which
+     * fires the detail route with arguments mapped from a chosen list item and
+     * only wants the raw response — not to mutate the detail route's state.
+     *
+     * @param  array<string,mixed>  $exampleArgs
+     */
+    public function dryRun(ApiRoute $route, array $exampleArgs = []): TestResult
+    {
+        return $this->run($route, $exampleArgs);
+    }
+
+    /**
      * Ad-hoc "playground" probe (spec §5.1 — the FREE-endpoint variant): fire a
      * raw {method, url, headers, query, body} request WITHOUT a persisted route,
      * connector or auth. Runs the SAME execution + response-classification stack

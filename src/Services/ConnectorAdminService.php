@@ -7,14 +7,17 @@ namespace Padosoft\AskMyDocsConnectorApi\Services;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Padosoft\AskMyDocsConnectorApi\Exceptions\ApiConnectorException;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
+use Padosoft\AskMyDocsConnectorApi\Support\RelationMapper;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use Padosoft\AskMyDocsConnectorBase\Support\TenantContext;
@@ -37,6 +40,7 @@ final class ConnectorAdminService
         private readonly SchemaInferrer $schemaInferrer,
         private readonly ToolDefinitionGenerator $toolGenerator,
         private readonly ApiToolExecutor $executor,
+        private readonly RelationMapper $relationMapper,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -61,6 +65,12 @@ final class ConnectorAdminService
             ->findOrFail($id);
     }
 
+    public function findRelation(int $id): ApiRouteRelation
+    {
+        return ApiRouteRelation::forTenant($this->currentTenant())
+            ->findOrFail($id);
+    }
+
     /* ----------------------------------------------------------------------
      | Connectors
      * -------------------------------------------------------------------- */
@@ -70,7 +80,8 @@ final class ConnectorAdminService
      */
     public function listConnectors(): Collection
     {
-        $query = ApiConnector::forTenant($this->currentTenant())->with('routes');
+        $query = ApiConnector::forTenant($this->currentTenant())
+            ->with(['routes', 'relations.listRoute:id,slug', 'relations.detailRoute:id,slug']);
         $query->orderBy('name');
 
         return $query->get();
@@ -225,6 +236,16 @@ final class ConnectorAdminService
 
     public function deleteRoute(ApiRoute $route): void
     {
+        // Remove relations where this route is either side BEFORE deleting it.
+        // The DB FK cascades too, but SQLite only enforces it with PRAGMA
+        // foreign_keys ON, so the app-side sweep keeps correctness driver-agnostic.
+        ApiRouteRelation::forTenant($route->tenant_id)
+            ->where(function ($q) use ($route): void {
+                $q->where('list_route_id', $route->id)
+                    ->orWhere('detail_route_id', $route->id);
+            })
+            ->delete();
+
         if (! $route->delete()) {
             throw new RuntimeException('Failed to delete route.');
         }
@@ -358,6 +379,126 @@ final class ConnectorAdminService
         $route->loadMissing('parameters');
 
         return $this->executor->execute($route, $arguments, []);
+    }
+
+    /* ----------------------------------------------------------------------
+     | Relations (List → Detail) — spec Obj 3
+     * -------------------------------------------------------------------- */
+
+    /**
+     * @return Collection<int,ApiRouteRelation>
+     */
+    public function listRelations(ApiConnector $connector): Collection
+    {
+        $query = ApiRouteRelation::forTenant($connector->tenant_id)
+            ->where('api_connector_id', $connector->id)
+            ->with(['listRoute', 'detailRoute']);
+        $query->orderBy('sort_order')->orderBy('id');
+
+        return $query->get();
+    }
+
+    /**
+     * @param  array<string,mixed>  $data
+     *
+     * @throws RuntimeException 422 on an invalid pair / mapping / duplicate
+     */
+    public function createRelation(ApiConnector $connector, array $data): ApiRouteRelation
+    {
+        $list = $this->findRoute((int) ($data['list_route_id'] ?? 0));
+        $detail = $this->findRoute((int) ($data['detail_route_id'] ?? 0));
+        $fieldMap = $this->normalizeFieldMap($data['field_map'] ?? []);
+        $this->assertRelationValid($connector, $list, $detail, $fieldMap);
+
+        $relation = new ApiRouteRelation;
+        $relation->tenant_id = $connector->tenant_id;
+        $relation->api_connector_id = $connector->id;
+        $relation->list_route_id = $list->id;
+        $relation->detail_route_id = $detail->id;
+        $relation->name = isset($data['name']) ? (string) $data['name'] : null;
+        $relation->description = isset($data['description']) ? (string) $data['description'] : null;
+        $relation->field_map = $fieldMap;
+        $relation->sort_order = (int) ($data['sort_order'] ?? 0);
+        $this->persist($relation);
+
+        return $this->loadRelation($relation);
+    }
+
+    /**
+     * @param  array<string,mixed>  $data
+     *
+     * @throws RuntimeException 422 on an invalid pair / mapping / duplicate
+     */
+    public function updateRelation(ApiRouteRelation $relation, array $data): ApiRouteRelation
+    {
+        $connector = ApiConnector::forTenant($relation->tenant_id)
+            ->findOrFail($relation->api_connector_id);
+
+        $list = array_key_exists('list_route_id', $data)
+            ? $this->findRoute((int) $data['list_route_id'])
+            : $this->findRoute($relation->list_route_id);
+        $detail = array_key_exists('detail_route_id', $data)
+            ? $this->findRoute((int) $data['detail_route_id'])
+            : $this->findRoute($relation->detail_route_id);
+        $fieldMap = array_key_exists('field_map', $data)
+            ? $this->normalizeFieldMap($data['field_map'])
+            : $relation->field_map;
+
+        $this->assertRelationValid($connector, $list, $detail, $fieldMap, ignoreRelationId: $relation->id);
+
+        $relation->list_route_id = $list->id;
+        $relation->detail_route_id = $detail->id;
+        if (array_key_exists('name', $data)) {
+            $relation->name = $data['name'] === null ? null : (string) $data['name'];
+        }
+        if (array_key_exists('description', $data)) {
+            $relation->description = $data['description'] === null ? null : (string) $data['description'];
+        }
+        $relation->field_map = $fieldMap;
+        if (array_key_exists('sort_order', $data)) {
+            $relation->sort_order = (int) $data['sort_order'];
+        }
+        $this->persist($relation);
+
+        return $this->loadRelation($relation);
+    }
+
+    public function deleteRelation(ApiRouteRelation $relation): void
+    {
+        if (! $relation->delete()) {
+            throw new RuntimeException('Failed to delete relation.');
+        }
+    }
+
+    /**
+     * Admin drill-test: take a single LIST item (client-supplied, or the item at
+     * `$itemIndex` in the list route's last test payload), apply the relation's
+     * field_map to build the detail route's arguments, and fire a NON-persisted
+     * raw call to the detail route. SSRF + auth still apply (inside dryRun); the
+     * detail route's last_test_* is NOT touched.
+     *
+     * @param  array<string,mixed>|null  $listItem
+     * @return array{arguments: array<string,mixed>, result: TestResult}
+     *
+     * @throws RuntimeException 422 when the item is missing or the mapping does not
+     *                          fit the chosen item (R14 — never a silent null)
+     */
+    public function drillTest(ApiRouteRelation $relation, ?array $listItem, ?int $itemIndex): array
+    {
+        // detailRoute + listRoute are guaranteed by the NOT-NULL FKs + cascade.
+        $relation->loadMissing(['detailRoute.parameters', 'listRoute']);
+        $item = $this->resolveDrillItem($relation, $listItem, $itemIndex);
+
+        try {
+            $arguments = $this->relationMapper->mapArguments($item, $relation->field_map);
+        } catch (ApiConnectorException $e) {
+            // A mapping that doesn't fit the chosen item is a client-fixable 422.
+            throw new RuntimeException($e->getMessage(), 422);
+        }
+
+        $result = $this->tester->dryRun($relation->detailRoute, $arguments);
+
+        return ['arguments' => $arguments, 'result' => $result];
     }
 
     /* ----------------------------------------------------------------------
@@ -543,6 +684,131 @@ final class ConnectorAdminService
     private function loadRoute(ApiRoute $route): ApiRoute
     {
         return $route->fresh(['parameters']) ?? $route;
+    }
+
+    private function loadRelation(ApiRouteRelation $relation): ApiRouteRelation
+    {
+        return $relation->fresh(['listRoute', 'detailRoute']) ?? $relation;
+    }
+
+    /**
+     * @param  list<array{from:string,to_param:string,to_location?:string}>  $fieldMap
+     *
+     * @throws RuntimeException 422 when the pair or the mapping is invalid
+     */
+    private function assertRelationValid(
+        ApiConnector $connector,
+        ApiRoute $list,
+        ApiRoute $detail,
+        array $fieldMap,
+        ?int $ignoreRelationId = null,
+    ): void {
+        if ($list->id === $detail->id) {
+            throw new RuntimeException('A relation must link two DIFFERENT routes.', 422);
+        }
+        if ($list->api_connector_id !== $connector->id || $detail->api_connector_id !== $connector->id) {
+            throw new RuntimeException('Both the list and detail routes must belong to this connector.', 422);
+        }
+        if (! $list->isList()) {
+            throw new RuntimeException('The list_route must have endpoint_type=list.', 422);
+        }
+        if (! $detail->isDetail()) {
+            throw new RuntimeException('The detail_route must have endpoint_type=detail.', 422);
+        }
+        if ($fieldMap === []) {
+            throw new RuntimeException('field_map cannot be empty.', 422);
+        }
+
+        // R5: every target must be an LLM parameter of the detail route — a
+        // fixed/secret param (or an undeclared token) cannot be injected from a
+        // list item. A path token like {id} is itself declared as an llm param.
+        $detail->loadMissing('parameters');
+        $llmParamNames = $detail->parameters
+            ->filter(fn (ApiRouteParameter $p): bool => $p->source === ParamSource::Llm)
+            ->map(fn (ApiRouteParameter $p): string => $p->name)
+            ->all();
+
+        foreach ($fieldMap as $entry) {
+            $toParam = $entry['to_param'];
+            if (! in_array($toParam, $llmParamNames, true)) {
+                throw new RuntimeException(
+                    "field_map target '{$toParam}' is not an LLM parameter of the detail route.",
+                    422,
+                );
+            }
+        }
+
+        $duplicate = ApiRouteRelation::forTenant($connector->tenant_id)
+            ->where('list_route_id', $list->id)
+            ->where('detail_route_id', $detail->id)
+            ->when($ignoreRelationId !== null, fn ($q) => $q->whereKeyNot($ignoreRelationId))
+            ->exists();
+        if ($duplicate) {
+            throw new RuntimeException('A relation between these two routes already exists.', 422);
+        }
+    }
+
+    /**
+     * Normalise the field_map into an ordered list of
+     * `{from, to_param, to_location?}`, dropping incomplete rows.
+     *
+     * @return list<array{from:string,to_param:string,to_location?:string}>
+     */
+    private function normalizeFieldMap(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            $from = trim((string) ($entry['from'] ?? ''));
+            $toParam = trim((string) ($entry['to_param'] ?? ''));
+            if ($from === '' || $toParam === '') {
+                continue;
+            }
+
+            $mapped = ['from' => $from, 'to_param' => $toParam];
+            $location = $entry['to_location'] ?? null;
+            if (is_string($location) && $location !== '') {
+                $mapped['to_location'] = $location;
+            }
+            $out[] = $mapped;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Resolve the single list item to drill from: an explicit client-supplied
+     * item wins; otherwise the item at `$itemIndex` (default 0) of the list
+     * route's persisted last_test_payload, unwrapped at its items_path.
+     *
+     * @param  array<string,mixed>|null  $listItem
+     * @return array<string,mixed>
+     *
+     * @throws RuntimeException 422 when no item can be resolved
+     */
+    private function resolveDrillItem(ApiRouteRelation $relation, ?array $listItem, ?int $itemIndex): array
+    {
+        if ($listItem !== null) {
+            return $listItem;
+        }
+
+        $list = $relation->listRoute;
+        $items = $this->relationMapper->itemsAt($list->last_test_payload, $list->items_path);
+        $index = $itemIndex ?? 0;
+        if (! array_key_exists($index, $items) || ! is_array($items[$index])) {
+            throw new RuntimeException(
+                'No list item at that index — test the list route first to populate its items.',
+                422,
+            );
+        }
+
+        return $items[$index];
     }
 
     /**
