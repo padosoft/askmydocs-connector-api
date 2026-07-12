@@ -55,6 +55,13 @@ Route::name('api-connectors.')->group(function (): void {
     // Routes (Rotte)
     Route::post('{connector}/routes', [ApiRouteController::class, 'store'])
         ->whereNumber('connector')->name('routes.store');
+    // Config JSON pivot — dry-run ("Testa") + AI producer ("Configura con AI") on
+    // an UNSAVED config, so the modal works in create mode (no {route} yet). Both
+    // inherit the group's admin stack + can:manageConnectors (R32) like siblings.
+    Route::post('{connector}/routes/test-config', [ApiRouteController::class, 'testConfig'])
+        ->whereNumber('connector')->name('routes.test-config');
+    Route::post('{connector}/routes/produce-config', [ApiRouteController::class, 'produceConfig'])
+        ->whereNumber('connector')->name('routes.produce-config');
     Route::get('routes/{route}', [ApiRouteController::class, 'show'])
         ->whereNumber('route')->name('routes.show');
     Route::patch('routes/{route}', [ApiRouteController::class, 'update'])

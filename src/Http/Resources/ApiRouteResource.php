@@ -7,6 +7,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfig;
 
 /**
  * Public shape of a Rotta (route). Includes the generated artifacts
@@ -53,6 +54,10 @@ final class ApiRouteResource extends JsonResource
             'parameters' => ApiRouteParameterResource::collection(
                 $this->whenLoaded('parameters')
             ),
+            // The canonical config JSON — the FE's form model. Only when the
+            // parameters relation is loaded (fromRoute reads it); the flat fields
+            // above stay for back-compat during the FE migration.
+            'config' => $this->whenLoaded('parameters', fn (): array => RouteConfig::fromRoute($this->resource)),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

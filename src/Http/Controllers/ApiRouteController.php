@@ -8,7 +8,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\AiConfigureApplyRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProduceConfigRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestConfigRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestPaginationRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
@@ -17,6 +19,8 @@ use Padosoft\AskMyDocsConnectorApi\Http\Resources\ApiRouteResource;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfig;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfigSchema;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use RuntimeException;
 
@@ -39,7 +43,7 @@ final class ApiRouteController extends Controller
         $connectorModel = $this->service->findConnector($connector);
 
         try {
-            $route = $this->service->createRoute($connectorModel, $request->validated());
+            $route = $this->service->createRoute($connectorModel, $this->routeData($request->validated()));
         } catch (RuntimeException $e) {
             return $this->failure($e);
         }
@@ -60,12 +64,81 @@ final class ApiRouteController extends Controller
         $model = $this->service->findRoute($route);
 
         try {
-            $updated = $this->service->updateRoute($model, $request->validated());
+            $updated = $this->service->updateRoute($model, $this->routeData($request->validated()));
         } catch (RuntimeException $e) {
             return $this->failure($e);
         }
 
         return (new ApiRouteResource($updated))->response();
+    }
+
+    /**
+     * Un-group a `{config}` envelope (the FE's canonical config JSON) into the
+     * flat create/update payload via the codec; otherwise pass the flat
+     * validated fields straight through (back-compat: CLI / legacy callers).
+     *
+     * @param  array<string,mixed>  $validated
+     * @return array<string,mixed>
+     */
+    private function routeData(array $validated): array
+    {
+        if (isset($validated['config']) && is_array($validated['config'])) {
+            return RouteConfig::applyToRoute(RouteConfigSchema::sanitize($validated['config']) ?? $validated['config']);
+        }
+
+        return $validated;
+    }
+
+    /**
+     * "Testa" — dry-run a (possibly unsaved) config against its endpoint and
+     * classify the live response. Works in create mode: no persisted route. A
+     * failed/non-JSON call is a valid outcome (HTTP 200, ok:false, R14).
+     */
+    public function testConfig(TestConfigRequest $request, int $connector): JsonResponse
+    {
+        $connectorModel = $this->service->findConnector($connector);
+        $out = $this->service->testConfig($connectorModel, $request->config(), $request->exampleArgs());
+        /** @var TestResult $result */
+        $result = $out['test'];
+
+        return response()->json([
+            'test' => $this->testPayload($result),
+            'endpoint_type' => $out['endpoint_type'],
+            'items_path' => $out['items_path'],
+            'detected_pagination' => $out['detected_pagination'],
+            'item_count' => $out['item_count'],
+        ]);
+    }
+
+    /**
+     * "Configura con AI" — the single AI pass over the config JSON. Returns the
+     * produced config + its final dry-run ("test finale") + the source (openapi /
+     * response / none). Does NOT persist; the operator reviews + saves. An
+     * OpenAPI fetch/parse/SSRF failure surfaces as 422 (R14).
+     */
+    public function produceConfig(ProduceConfigRequest $request, int $connector): JsonResponse
+    {
+        $connectorModel = $this->service->findConnector($connector);
+
+        try {
+            $out = $this->service->produceConfig(
+                $connectorModel,
+                $request->config(),
+                $request->exampleArgs(),
+                $request->openApiUrl(),
+            );
+        } catch (RuntimeException $e) {
+            return $this->failure($e);
+        }
+
+        /** @var TestResult $final */
+        $final = $out['final_test'];
+
+        return response()->json([
+            'config' => $out['config'],
+            'final_test' => $this->testPayload($final),
+            'source' => $out['source'],
+        ]);
     }
 
     public function destroy(int $route): JsonResponse

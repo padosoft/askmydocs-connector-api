@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\Concerns\ValidatesRouteConfig;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\Concerns\ValidatesRouteParameters;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
@@ -14,9 +15,13 @@ use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 /**
  * Validates the create-route payload (spec §4). `project_key`, `status` and the
  * generated artifacts are NOT operator input — the service derives them.
+ *
+ * Accepts EITHER the flat field shape OR a `{config}` envelope (the canonical
+ * config JSON, the FE's shape); the controller un-groups the config via the codec.
  */
 final class StoreRouteRequest extends FormRequest
 {
+    use ValidatesRouteConfig;
     use ValidatesRouteParameters;
 
     public function authorize(): bool
@@ -29,6 +34,10 @@ final class StoreRouteRequest extends FormRequest
      */
     public function rules(): array
     {
+        if ($this->has('config')) {
+            return $this->routeConfigRules();
+        }
+
         return array_merge([
             'name' => ['required', 'string', 'max:128'],
             'slug' => ['nullable', 'string', 'max:96'],
