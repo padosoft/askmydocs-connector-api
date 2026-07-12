@@ -69,21 +69,6 @@ final class ConnectorConfigProduceTest extends TestCase
             /** @param array<string,mixed>|null $config */
             public function __construct(private ?array $config) {}
 
-            public function analyze(array $context): ?string
-            {
-                return null;
-            }
-
-            public function detectPagination(array $context): ?array
-            {
-                return null;
-            }
-
-            public function suggestConfiguration(array $context): ?array
-            {
-                return null;
-            }
-
             public function produceConfig(array $context): ?array
             {
                 return $this->config;

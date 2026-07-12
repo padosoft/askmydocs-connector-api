@@ -78,22 +78,6 @@ Route::name('api-connectors.')->group(function (): void {
         ->whereNumber('route')->name('routes.disable');
     Route::post('routes/{route}/try', [ApiRouteController::class, 'tryTool'])
         ->whereNumber('route')->name('routes.try');
-    // Workbench "Analisi" — fire the route + return a reduced structure (item 3).
-    Route::post('routes/{route}/analyze', [ApiRouteController::class, 'analyze'])
-        ->whereNumber('route')->name('routes.analyze');
-    // Workbench "Paginazione" — detect (items 4) + test (item 5).
-    Route::post('routes/{route}/detect-pagination', [ApiRouteController::class, 'detectPagination'])
-        ->whereNumber('route')->name('routes.detect-pagination');
-    Route::post('routes/{route}/test-pagination', [ApiRouteController::class, 'testPagination'])
-        ->whereNumber('route')->name('routes.test-pagination');
-    // Workbench "Cerca" — fire with search params (item 6).
-    Route::post('routes/{route}/test-search', [ApiRouteController::class, 'testSearch'])
-        ->whereNumber('route')->name('routes.test-search');
-    // Workbench "Configura con AI" — propose (preview) + one-shot detect/apply/test.
-    Route::post('routes/{route}/ai-configure', [ApiRouteController::class, 'aiConfigure'])
-        ->whereNumber('route')->name('routes.ai-configure');
-    Route::post('routes/{route}/ai-configure-apply', [ApiRouteController::class, 'aiConfigureApply'])
-        ->whereNumber('route')->name('routes.ai-configure-apply');
 
     // Relations (List → Detail) — spec Obj 3
     Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])

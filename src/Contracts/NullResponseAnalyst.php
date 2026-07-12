@@ -10,21 +10,6 @@ namespace Padosoft\AskMyDocsConnectorApi\Contracts;
  */
 final class NullResponseAnalyst implements ResponseAnalyst
 {
-    public function analyze(array $context): ?string
-    {
-        return null;
-    }
-
-    public function detectPagination(array $context): ?array
-    {
-        return null;
-    }
-
-    public function suggestConfiguration(array $context): ?array
-    {
-        return null;
-    }
-
     public function produceConfig(array $context): ?array
     {
         return null;

@@ -6,12 +6,10 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
-use Padosoft\AskMyDocsConnectorApi\Http\Requests\AiConfigureApplyRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProduceConfigRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestConfigRequest;
-use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestPaginationRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\UpdateRouteRequest;
@@ -266,109 +264,6 @@ final class ApiRouteController extends Controller
     }
 
     /**
-     * Workbench "Analisi" — fire the route and return a deterministically
-     * REDUCED structure (spec item 3) so the whole shape reads start-to-end,
-     * plus reduction `notes` and (P2) an AI narration. Non-JSON/failed call is a
-     * valid 200 display outcome (R14) with `reduced=null`.
-     */
-    public function analyze(TestRouteRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-        $outcome = $this->service->analyzeRoute($model, $request->exampleArgs());
-        /** @var TestResult $result */
-        $result = $outcome['result'];
-
-        return response()->json([
-            'test' => $this->testPayload($result),
-            'reduced' => $this->trimBody($outcome['reduced']),
-            'notes' => $outcome['notes'],
-            'analysis' => $outcome['analysis'],
-        ]);
-    }
-
-    /**
-     * Workbench "Paginazione" — guess the pagination scheme (heuristic + AI
-     * fallback). Non-persisting; the operator confirms/edits then saves via PATCH.
-     */
-    public function detectPagination(TestRouteRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-        $out = $this->service->detectPagination($model, $request->exampleArgs());
-
-        return response()->json(['config' => $out['config'], 'source' => $out['source']]);
-    }
-
-    /**
-     * Workbench "Paginazione" — fire two pages with the given config and report
-     * whether page 2 advances (item counts + verdict). Non-persisting.
-     */
-    public function testPagination(TestPaginationRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-
-        return response()->json(
-            $this->service->testPagination($model, $request->pagination(), $request->exampleArgs()),
-        );
-    }
-
-    /**
-     * Workbench "Cerca" — fire the route with the operator's search parameters
-     * and return the raw response (item 6). Non-persisting; 200 even on failure.
-     */
-    public function testSearch(TestRouteRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-        $result = $this->service->testSearch($model, $request->exampleArgs());
-
-        return response()->json(['test' => $this->testPayload($result)]);
-    }
-
-    /**
-     * "Configura con AI" — propose the full route configuration (endpoint type,
-     * items_path, pagination, tool name/description, parameters) from a test
-     * call. Non-persisting: the operator applies it via PATCH. `suggestion` is
-     * null when the call returned no JSON (R14).
-     */
-    public function aiConfigure(TestRouteRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-        $out = $this->service->autoConfigure($model, $request->exampleArgs());
-        /** @var TestResult $result */
-        $result = $out['result'];
-
-        return response()->json([
-            'test' => $this->testPayload($result),
-            'suggestion' => $out['suggestion'],
-        ]);
-    }
-
-    /**
-     * "Configura con AI" ONE-SHOT — detect + apply + final test in one call.
-     * Returns what was applied, the final test outcome (the route is now
-     * `tested`), and the pagination verdict when a scheme was configured.
-     * `applied` is null when the call returned no JSON (R14).
-     */
-    public function aiConfigureApply(AiConfigureApplyRequest $request, int $route): JsonResponse
-    {
-        $model = $this->service->findRoute($route);
-
-        try {
-            $out = $this->service->applyAiConfiguration($model, $request->exampleArgs(), $request->openApiUrl());
-        } catch (RuntimeException $e) {
-            return $this->failure($e); // OpenAPI fetch/parse/SSRF failure → 422
-        }
-
-        /** @var TestResult $final */
-        $final = $out['final_test'];
-
-        return response()->json([
-            'applied' => $out['applied'],
-            'final_test' => $this->testPayload($final),
-            'pagination_test' => $out['pagination_test'],
-            'source' => $out['source'],
-        ]);
-    }
-
     /**
      * @return array<string,mixed>
      */
