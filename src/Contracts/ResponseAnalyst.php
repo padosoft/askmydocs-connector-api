@@ -34,4 +34,15 @@ interface ResponseAnalyst
      * @return array<string,mixed>|null
      */
     public function detectPagination(array $context): ?array;
+
+    /**
+     * Best-effort FULL configuration suggestion for turning the endpoint into a
+     * tool ("Configura con AI") — a concise tool name + description, the likely
+     * request parameters, and (if evident) the pagination scheme. The operator
+     * reviews and applies it. Null when unavailable.
+     *
+     * @param  array{method: string, url: string, reduced: mixed}  $context
+     * @return array{tool_name?: string, tool_description?: string, parameters?: list<array<string,mixed>>, pagination?: array<string,mixed>}|null
+     */
+    public function suggestConfiguration(array $context): ?array;
 }

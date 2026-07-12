@@ -91,6 +91,11 @@ final class ConnectorAdminServiceTest extends TestCase
             {
                 return null;
             }
+
+            public function suggestConfiguration(array $context): ?array
+            {
+                return null;
+            }
         });
         $service = $this->app->make(ConnectorAdminService::class);
         $connector = $service->createConnector(['name' => 'C1']);
@@ -117,6 +122,11 @@ final class ConnectorAdminServiceTest extends TestCase
             }
 
             public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
+
+            public function suggestConfiguration(array $context): ?array
             {
                 return null;
             }
@@ -215,6 +225,51 @@ final class ConnectorAdminServiceTest extends TestCase
 
         $this->assertTrue($result->ok);
         Http::assertSent(fn (Request $req): bool => str_contains($req->url(), 'q=shoes'));
+    }
+
+    public function test_auto_configure_merges_deterministic_detection_with_ai_suggestions(): void
+    {
+        Http::fake(['api.example.com/*' => Http::response(
+            ['data' => [['id' => 1, 'name' => 'x']], 'meta' => ['next_cursor' => 'c2']],
+            200,
+        )]);
+        $this->app->bind(ResponseAnalyst::class, fn (): ResponseAnalyst => new class implements ResponseAnalyst
+        {
+            public function analyze(array $context): ?string
+            {
+                return null;
+            }
+
+            public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
+
+            public function suggestConfiguration(array $context): ?array
+            {
+                return [
+                    'tool_name' => 'list_catalog',
+                    'tool_description' => 'List the catalog.',
+                    'parameters' => [['name' => 'q', 'location' => 'query', 'source' => 'llm', 'type' => 'string', 'required' => false]],
+                ];
+            }
+        });
+        $service = $this->app->make(ConnectorAdminService::class);
+        $connector = $service->createConnector(['name' => 'C1']);
+        $route = $service->createRoute($connector, [
+            'name' => 'Catalog', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $s = $service->autoConfigure($route, [])['suggestion'];
+
+        // Deterministic: a list under `data` + cursor pagination from meta.next_cursor.
+        $this->assertSame('list', $s['endpoint_type']);
+        $this->assertSame('data', $s['items_path']);
+        $this->assertSame('cursor', $s['pagination']['type']);
+        // AI: tool name/description + inferred params.
+        $this->assertSame('list_catalog', $s['tool_name']);
+        $this->assertSame('q', $s['parameters'][0]['name']);
     }
 
     public function test_find_connector_is_tenant_scoped(): void

@@ -600,6 +600,51 @@ final class ConnectorAdminService
         return $this->tester->dryRun($route, $searchArgs);
     }
 
+    /**
+     * "Configura con AI" — one pass that proposes the FULL route configuration
+     * from a test call: deterministic endpoint_type/items_path + heuristic
+     * pagination, plus an AI suggestion for the tool name/description, the request
+     * parameters and (fallback) pagination. Returns a SUGGESTION the operator
+     * reviews + applies via {@see updateRoute}; nothing is persisted here. A
+     * non-JSON / failed call yields `suggestion = null` (R14).
+     *
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{result: TestResult, suggestion: array<string,mixed>|null}
+     */
+    public function autoConfigure(ApiRoute $route, array $exampleArgs = []): array
+    {
+        $route->loadMissing('parameters');
+        $result = $this->tester->dryRun($route, $exampleArgs);
+        if (! $result->isJson) {
+            return ['result' => $result, 'suggestion' => null];
+        }
+
+        $classification = $this->schemaInferrer->classifyEndpoint($result->body);
+        $pagination = $this->paginationDetector->detect($route, $result->body);
+
+        $ai = null;
+        if ((bool) config('connector-api.llm_assist.enabled', true)) {
+            $reduced = $this->structureReducer->reduce($result->body)['reduced'];
+            $ai = $this->analyst->suggestConfiguration([
+                'method' => $route->http_method->value,
+                'url' => $route->url,
+                'reduced' => $reduced,
+            ]);
+        }
+
+        return [
+            'result' => $result,
+            'suggestion' => [
+                'endpoint_type' => $classification['type']->value,
+                'items_path' => $classification['items_path'],
+                'pagination' => $pagination ?? ($ai['pagination'] ?? null),
+                'tool_name' => $ai['tool_name'] ?? null,
+                'tool_description' => $ai['tool_description'] ?? null,
+                'parameters' => $ai['parameters'] ?? [],
+            ],
+        ];
+    }
+
     /* ----------------------------------------------------------------------
      | Relations (List → Detail) — spec Obj 3
      * -------------------------------------------------------------------- */

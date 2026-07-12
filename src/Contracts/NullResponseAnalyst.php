@@ -19,4 +19,9 @@ final class NullResponseAnalyst implements ResponseAnalyst
     {
         return null;
     }
+
+    public function suggestConfiguration(array $context): ?array
+    {
+        return null;
+    }
 }

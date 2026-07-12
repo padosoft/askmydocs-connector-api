@@ -250,6 +250,25 @@ final class ApiRouteController extends Controller
     }
 
     /**
+     * "Configura con AI" — propose the full route configuration (endpoint type,
+     * items_path, pagination, tool name/description, parameters) from a test
+     * call. Non-persisting: the operator applies it via PATCH. `suggestion` is
+     * null when the call returned no JSON (R14).
+     */
+    public function aiConfigure(TestRouteRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+        $out = $this->service->autoConfigure($model, $request->exampleArgs());
+        /** @var TestResult $result */
+        $result = $out['result'];
+
+        return response()->json([
+            'test' => $this->testPayload($result),
+            'suggestion' => $out['suggestion'],
+        ]);
+    }
+
+    /**
      * @return array<string,mixed>
      */
     private function probePayload(TestResult $result): array
