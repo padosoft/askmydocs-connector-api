@@ -46,6 +46,7 @@ final class ApiRouteResource extends JsonResource
             'param_mapping' => $this->param_mapping,
             'tool_definition' => $this->tool_definition,
             'output_transform' => $this->output_transform,
+            'pagination' => $this->pagination,
             'last_test_at' => $this->last_test_at?->toIso8601String(),
             'last_test_status' => $this->last_test_status,
             'last_test_payload' => $this->last_test_payload,
