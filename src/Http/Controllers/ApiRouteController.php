@@ -191,6 +191,27 @@ final class ApiRouteController extends Controller
     }
 
     /**
+     * Workbench "Analisi" — fire the route and return a deterministically
+     * REDUCED structure (spec item 3) so the whole shape reads start-to-end,
+     * plus reduction `notes` and (P2) an AI narration. Non-JSON/failed call is a
+     * valid 200 display outcome (R14) with `reduced=null`.
+     */
+    public function analyze(TestRouteRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+        $outcome = $this->service->analyzeRoute($model, $request->exampleArgs());
+        /** @var TestResult $result */
+        $result = $outcome['result'];
+
+        return response()->json([
+            'test' => $this->testPayload($result),
+            'reduced' => $this->trimBody($outcome['reduced']),
+            'notes' => $outcome['notes'],
+            'analysis' => $outcome['analysis'],
+        ]);
+    }
+
+    /**
      * @return array<string,mixed>
      */
     private function probePayload(TestResult $result): array

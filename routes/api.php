@@ -71,6 +71,9 @@ Route::name('api-connectors.')->group(function (): void {
         ->whereNumber('route')->name('routes.disable');
     Route::post('routes/{route}/try', [ApiRouteController::class, 'tryTool'])
         ->whereNumber('route')->name('routes.try');
+    // Workbench "Analisi" — fire the route + return a reduced structure (item 3).
+    Route::post('routes/{route}/analyze', [ApiRouteController::class, 'analyze'])
+        ->whereNumber('route')->name('routes.analyze');
 
     // Relations (List → Detail) — spec Obj 3
     Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])

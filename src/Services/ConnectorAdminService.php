@@ -19,6 +19,7 @@ use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
 use Padosoft\AskMyDocsConnectorApi\Support\RelationMapper;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
+use Padosoft\AskMyDocsConnectorApi\Support\StructureReducer;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use Padosoft\AskMyDocsConnectorBase\Support\TenantContext;
 use RuntimeException;
@@ -41,6 +42,7 @@ final class ConnectorAdminService
         private readonly ToolDefinitionGenerator $toolGenerator,
         private readonly ApiToolExecutor $executor,
         private readonly RelationMapper $relationMapper,
+        private readonly StructureReducer $structureReducer,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -389,6 +391,38 @@ final class ConnectorAdminService
         $route->loadMissing('parameters');
 
         return $this->executor->execute($route, $arguments, []);
+    }
+
+    /**
+     * Fire the route (non-persisting dry run) and return a deterministically
+     * REDUCED view of the response (spec item 3 no-AI half) — every array
+     * truncated to a few representative items so the whole structure reads
+     * start-to-end. The reduction runs only on a JSON body; a non-JSON / failed
+     * call returns the raw {@see TestResult} with `reduced=null`. `analysis`
+     * stays null here — the AI narration is layered on in P2.
+     *
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{result: TestResult, reduced: mixed, notes: list<array<string,mixed>>, analysis: ?string}
+     */
+    public function analyzeRoute(ApiRoute $route, array $exampleArgs = []): array
+    {
+        $route->loadMissing('parameters');
+        $result = $this->tester->dryRun($route, $exampleArgs);
+
+        $reduced = null;
+        $notes = [];
+        if ($result->isJson) {
+            $reduction = $this->structureReducer->reduce($result->body);
+            $reduced = $reduction['reduced'];
+            $notes = $reduction['notes'];
+        }
+
+        return [
+            'result' => $result,
+            'reduced' => $reduced,
+            'notes' => $notes,
+            'analysis' => null,
+        ];
     }
 
     /* ----------------------------------------------------------------------

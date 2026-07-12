@@ -44,6 +44,36 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->assertDatabaseHas('api_connectors', ['name' => 'C1', 'tenant_id' => 'acme']);
     }
 
+    public function test_analyze_route_reduces_a_long_response_without_persisting_or_ai(): void
+    {
+        Http::fake([
+            'api.example.com/*' => Http::response(
+                ['data' => array_map(fn (int $i): array => ['id' => $i, 'name' => "n{$i}"], range(1, 50))],
+                200,
+            ),
+        ]);
+
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'Catalog',
+            'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog',
+            'mode' => 'tool',
+            'parameters' => [],
+        ]);
+
+        $out = $this->service->analyzeRoute($route, []);
+
+        // The `data` collection is truncated to 3 items + a sentinel; structure kept.
+        $this->assertCount(4, $out['reduced']['data']);
+        $this->assertSame(['id' => 1, 'name' => 'n1'], $out['reduced']['data'][0]);
+        $this->assertSame('data', $out['notes'][0]['path']);
+        $this->assertSame(50, $out['notes'][0]['total']);
+        // P1: no AI narration yet, and dryRun did NOT persist last_test_*.
+        $this->assertNull($out['analysis']);
+        $this->assertNull($route->fresh()->last_test_at);
+    }
+
     public function test_find_connector_is_tenant_scoped(): void
     {
         $connector = $this->service->createConnector(['name' => 'C1']);
