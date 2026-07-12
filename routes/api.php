@@ -79,6 +79,9 @@ Route::name('api-connectors.')->group(function (): void {
         ->whereNumber('route')->name('routes.detect-pagination');
     Route::post('routes/{route}/test-pagination', [ApiRouteController::class, 'testPagination'])
         ->whereNumber('route')->name('routes.test-pagination');
+    // Workbench "Cerca" — fire with search params (item 6).
+    Route::post('routes/{route}/test-search', [ApiRouteController::class, 'testSearch'])
+        ->whereNumber('route')->name('routes.test-search');
 
     // Relations (List → Detail) — spec Obj 3
     Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])

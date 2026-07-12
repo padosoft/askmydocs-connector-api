@@ -238,6 +238,18 @@ final class ApiRouteController extends Controller
     }
 
     /**
+     * Workbench "Cerca" — fire the route with the operator's search parameters
+     * and return the raw response (item 6). Non-persisting; 200 even on failure.
+     */
+    public function testSearch(TestRouteRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+        $result = $this->service->testSearch($model, $request->exampleArgs());
+
+        return response()->json(['test' => $this->testPayload($result)]);
+    }
+
+    /**
      * @return array<string,mixed>
      */
     private function probePayload(TestResult $result): array

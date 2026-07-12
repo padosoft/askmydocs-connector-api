@@ -586,6 +586,20 @@ final class ConnectorAdminService
         return $node;
     }
 
+    /**
+     * Workbench "Cerca" (spec item 6) — fire the route with the operator's search
+     * parameter values and return the raw response. Thin over {@see ApiRouteTester::dryRun}
+     * (non-persisting); the search params are just the route's llm arguments.
+     *
+     * @param  array<string,mixed>  $searchArgs
+     */
+    public function testSearch(ApiRoute $route, array $searchArgs): TestResult
+    {
+        $route->loadMissing('parameters');
+
+        return $this->tester->dryRun($route, $searchArgs);
+    }
+
     /* ----------------------------------------------------------------------
      | Relations (List → Detail) — spec Obj 3
      * -------------------------------------------------------------------- */

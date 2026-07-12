@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Tests\Feature;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
@@ -199,6 +200,21 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->service->updateRoute($route, ['pagination' => ['type' => 'page', 'page_param' => 'page']]);
 
         $this->assertSame(['type' => 'page', 'page_param' => 'page'], $route->fresh()->pagination);
+    }
+
+    public function test_test_search_fires_the_route_with_the_search_args(): void
+    {
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200)]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'Search', 'http_method' => 'GET', 'url' => 'https://api.example.com/search', 'mode' => 'tool',
+            'parameters' => [['name' => 'q', 'location' => 'query', 'source' => 'llm', 'type' => 'string', 'required' => true]],
+        ]);
+
+        $result = $this->service->testSearch($route, ['q' => 'shoes']);
+
+        $this->assertTrue($result->ok);
+        Http::assertSent(fn (Request $req): bool => str_contains($req->url(), 'q=shoes'));
     }
 
     public function test_find_connector_is_tenant_scoped(): void
