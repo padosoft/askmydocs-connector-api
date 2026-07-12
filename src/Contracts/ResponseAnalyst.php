@@ -41,8 +41,36 @@ interface ResponseAnalyst
      * request parameters, and (if evident) the pagination scheme. The operator
      * reviews and applies it. Null when unavailable.
      *
+     * @deprecated superseded by {@see self::produceConfig()} — emits the whole
+     *             canonical config JSON in one call instead of a partial suggestion.
+     *
      * @param  array{method: string, url: string, reduced: mixed}  $context
      * @return array{tool_name?: string, tool_description?: string, parameters?: list<array<string,mixed>>, pagination?: array<string,mixed>}|null
      */
     public function suggestConfiguration(array $context): ?array;
+
+    /**
+     * Produce the ENTIRE canonical config JSON for a route in a SINGLE call.
+     *
+     * The model is given how the endpoint is called (method + url + the args
+     * used), a truncated live response sample (+reduction notes), the target
+     * config JSON Schema, and a deterministic seed (endpoint_type / items_path /
+     * pagination the host already computed exactly). It returns a config JSON —
+     * grouped identity·request·response·options — that the caller sanitizes and
+     * feeds straight to the codec. Null when unavailable (Null analyst / failed
+     * parse); the caller then falls back to the deterministic seed.
+     *
+     * @param  array{
+     *     method: string,
+     *     url: string,
+     *     example_args: array<string,mixed>,
+     *     reduced: mixed,
+     *     notes: list<array<string,mixed>>,
+     *     schema: array<string,mixed>,
+     *     seed: array<string,mixed>,
+     *     current?: array<string,mixed>
+     * }  $context
+     * @return array<string,mixed>|null a config JSON (unsanitized), or null
+     */
+    public function produceConfig(array $context): ?array;
 }

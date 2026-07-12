@@ -18,9 +18,13 @@ use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\OpenApiImporter;
 use Padosoft\AskMyDocsConnectorApi\Support\PaginationDetector;
+use Padosoft\AskMyDocsConnectorApi\Support\ParamLocation;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
 use Padosoft\AskMyDocsConnectorApi\Support\RelationMapper;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfig;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfigSchema;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
 use Padosoft\AskMyDocsConnectorApi\Support\StructureReducer;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
@@ -602,6 +606,283 @@ final class ConnectorAdminService
         return $this->tester->dryRun($route, $searchArgs);
     }
 
+    /* ----------------------------------------------------------------------
+     | Config JSON (canonical) — the AI-produced pivot for a route
+     * -------------------------------------------------------------------- */
+
+    /**
+     * Dry-run a config JSON that has NOT been persisted yet (the modal's "Testa"
+     * — works in create mode too), and classify the live response.
+     *
+     * Builds a transient (unsaved) route from the config, fires the real call
+     * (SSRF/planner/auth all apply), and — on a JSON body — reports the
+     * deterministically classified endpoint_type/items_path + detected
+     * pagination so the modal can offer them without a second round-trip.
+     *
+     * @param  array<string,mixed>  $config  a (grouped) config JSON
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{test: TestResult, endpoint_type: string, items_path: ?string, detected_pagination: ?array<string,mixed>, item_count: ?int}
+     */
+    public function testConfig(ApiConnector $connector, array $config, array $exampleArgs = []): array
+    {
+        $route = $this->transientRouteFromConfig($connector, RouteConfigSchema::sanitize($config) ?? $config);
+        $result = $this->tester->dryRun($route, $exampleArgs);
+
+        $type = 'unknown';
+        $itemsPath = null;
+        $pagination = null;
+        $itemCount = null;
+        if ($result->isJson) {
+            $classification = $this->schemaInferrer->classifyEndpoint($result->body);
+            $type = $classification['type']->value;
+            $itemsPath = $classification['items_path'];
+            $pagination = $this->paginationDetector->detect($route, $result->body);
+            $itemCount = count($this->relationMapper->itemsAt($result->body, is_string($itemsPath) ? $itemsPath : ''));
+        }
+
+        return [
+            'test' => $result,
+            'endpoint_type' => $type,
+            'items_path' => $itemsPath,
+            'detected_pagination' => $pagination,
+            'item_count' => $itemCount,
+        ];
+    }
+
+    /**
+     * "Configura con AI" over the canonical config JSON — the single AI pass.
+     *
+     * Prefer an OpenAPI contract when a spec URL is given (authoritative, no live
+     * call needed); otherwise dry-run the current config, hand the reduced sample
+     * + the target schema + a deterministic seed to {@see ResponseAnalyst::produceConfig()},
+     * then let the deterministic classifier/detector WIN on the structural fields.
+     * Returns the produced config JSON + a final dry-run of it (the "test finale")
+     * — it does NOT persist; the operator reviews the filled form and saves.
+     *
+     * @param  array<string,mixed>  $config  the current (grouped) config JSON
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{config: array<string,mixed>|null, final_test: TestResult, source: string}
+     */
+    public function produceConfig(ApiConnector $connector, array $config, array $exampleArgs = [], ?string $openApiUrl = null): array
+    {
+        $input = RouteConfigSchema::sanitize($config) ?? $config;
+        $transient = $this->transientRouteFromConfig($connector, $input);
+
+        // OpenAPI producer: authoritative, works behind auth, no live call.
+        if (is_string($openApiUrl) && $openApiUrl !== '') {
+            $suggestion = $this->openApiImporter->configForRoute($openApiUrl, $transient);
+            if ($suggestion !== null) {
+                $produced = RouteConfigSchema::sanitize($this->suggestionToConfig($suggestion, $input));
+
+                return [
+                    'config' => $produced,
+                    'final_test' => $this->dryRunProducedConfig($connector, $produced ?? $input, $exampleArgs),
+                    'source' => 'openapi',
+                ];
+            }
+        }
+
+        // Response producer: sample the endpoint, then AI + deterministic-wins.
+        $result = $this->tester->dryRun($transient, $exampleArgs);
+        if (! $result->isJson) {
+            return ['config' => null, 'final_test' => $result, 'source' => 'none'];
+        }
+
+        $reduction = $this->structureReducer->reduce($result->body);
+        $seed = $this->deterministicSeed($transient, $result->body);
+
+        $aiConfig = null;
+        if ((bool) config('connector-api.llm_assist.enabled', true)) {
+            $aiConfig = $this->analyst->produceConfig([
+                'method' => $transient->http_method->value,
+                'url' => $transient->url,
+                'example_args' => $exampleArgs,
+                'reduced' => $reduction['reduced'],
+                'notes' => $reduction['notes'],
+                'schema' => RouteConfigSchema::schema(),
+                'seed' => $seed,
+                'current' => $input,
+            ]);
+        }
+
+        $produced = RouteConfigSchema::sanitize($this->mergeProducedConfig($input, $aiConfig, $seed));
+
+        return [
+            'config' => $produced,
+            'final_test' => $this->dryRunProducedConfig($connector, $produced ?? $input, $exampleArgs),
+            'source' => 'response',
+        ];
+    }
+
+    /**
+     * Build a transient (UNSAVED) route from a config JSON so the tester's
+     * planner/executor/SSRF path can dry-run it without persistence. In-memory
+     * params + connector relation are set so RequestPlanner + effectiveAuthProfile
+     * resolve exactly as they would for a saved route.
+     *
+     * @param  array<string,mixed>  $config
+     */
+    private function transientRouteFromConfig(ApiConnector $connector, array $config): ApiRoute
+    {
+        $flat = RouteConfig::applyToRoute($config);
+
+        $route = new ApiRoute;
+        $route->tenant_id = $connector->tenant_id;
+        $route->api_connector_id = $connector->id;
+        $route->project_key = $connector->projectScope();
+        $route->name = (string) ($flat['name'] ?? '');
+        $route->slug = '';
+        $route->description = $flat['description'] ?? null;
+        $route->http_method = $flat['http_method'] ?? HttpMethod::GET->value;
+        $route->url = (string) ($flat['url'] ?? '');
+        $route->auth_profile_id = $flat['auth_profile_id'] ?? null;
+        $route->mode = $flat['mode'] ?? RouteMode::Tool->value;
+        $route->status = RouteStatus::Draft;
+        $route->endpoint_type = EndpointType::Unknown;
+        $route->endpoint_type_locked = false;
+        $route->timeout_ms = $flat['timeout_ms'] ?? null;
+        $route->cache_ttl_s = $flat['cache_ttl_s'] ?? null;
+        $route->rate_limit = $flat['rate_limit'] ?? null;
+        $route->output_transform = $this->arrayOrNull($flat['output_transform'] ?? null);
+        $route->pagination = $this->arrayOrNull($flat['pagination'] ?? null);
+        $route->items_path = is_string($flat['items_path'] ?? null) ? $flat['items_path'] : null;
+
+        $params = [];
+        foreach ($flat['parameters'] ?? [] as $index => $p) {
+            $model = new ApiRouteParameter;
+            $model->tenant_id = $connector->tenant_id;
+            $model->name = (string) ($p['name'] ?? '');
+            $model->location = $p['location'] ?? ParamLocation::Query->value;
+            $model->source = $p['source'] ?? ParamSource::Llm->value;
+            $model->type = $p['type'] ?? ParamType::String->value;
+            $model->required = (bool) ($p['required'] ?? false);
+            $model->value = $p['value'] ?? null;
+            $model->secret_ref = $p['secret_ref'] ?? null;
+            $model->description = $p['description'] ?? null;
+            $model->sort_order = isset($p['sort_order']) ? (int) $p['sort_order'] : $index;
+            $params[] = $model;
+        }
+        $route->setRelation('parameters', new Collection($params));
+        $route->setRelation('connector', $connector);
+
+        return $route;
+    }
+
+    /**
+     * Dry-run a PRODUCED config as the "test finale". LLM params are forced
+     * non-required so a freshly-inferred required arg missing from the example
+     * args can't fail the verification call (the operator tightens later).
+     *
+     * @param  array<string,mixed>  $config
+     * @param  array<string,mixed>  $exampleArgs
+     */
+    private function dryRunProducedConfig(ApiConnector $connector, array $config, array $exampleArgs): TestResult
+    {
+        $relaxed = $config;
+        $params = $relaxed['request']['params'] ?? [];
+        if (is_array($params)) {
+            $relaxed['request']['params'] = array_map(
+                static fn (mixed $p): mixed => is_array($p) ? ['required' => false] + $p : $p,
+                $params,
+            );
+        }
+
+        return $this->tester->dryRun($this->transientRouteFromConfig($connector, $relaxed), $exampleArgs);
+    }
+
+    /**
+     * Deterministic seed for the AI: the classified endpoint_type/items_path +
+     * the detected pagination, expressed as a partial config `response` group.
+     *
+     * @return array<string,mixed>
+     */
+    private function deterministicSeed(ApiRoute $transient, mixed $body): array
+    {
+        $classification = $this->schemaInferrer->classifyEndpoint($body);
+        $type = $classification['type'];
+
+        return [
+            'response' => [
+                'endpoint_type' => $type === EndpointType::Unknown ? 'auto' : $type->value,
+                'items_path' => $classification['items_path'],
+                'pagination' => $this->paginationDetector->detect($transient, $body),
+            ],
+        ];
+    }
+
+    /**
+     * Merge the AI config (or the input, when AI is off) with the deterministic
+     * seed — the classifier/detector WIN on the structural fields.
+     *
+     * @param  array<string,mixed>  $input
+     * @param  array<string,mixed>|null  $aiConfig
+     * @param  array<string,mixed>  $seed
+     * @return array<string,mixed>
+     */
+    private function mergeProducedConfig(array $input, ?array $aiConfig, array $seed): array
+    {
+        $base = is_array($aiConfig) ? $aiConfig : $input;
+        $seedResponse = is_array($seed['response'] ?? null) ? $seed['response'] : [];
+        $response = is_array($base['response'] ?? null) ? $base['response'] : [];
+
+        // Deterministic classification wins when it decided; otherwise keep base.
+        if (($seedResponse['endpoint_type'] ?? 'auto') !== 'auto') {
+            $response['endpoint_type'] = $seedResponse['endpoint_type'];
+            $response['items_path'] = $seedResponse['items_path'] ?? null;
+        }
+        // Detected pagination wins; else keep whatever the AI/base proposed.
+        if (($seedResponse['pagination'] ?? null) !== null) {
+            $response['pagination'] = $seedResponse['pagination'];
+        }
+        $base['response'] = $response;
+
+        return $base;
+    }
+
+    /**
+     * Adapt the flat OpenAPI-importer suggestion into a grouped config JSON,
+     * carrying request/auth/options from the current input config.
+     *
+     * @param  array<string,mixed>  $suggestion
+     * @param  array<string,mixed>  $input
+     * @return array<string,mixed>
+     */
+    private function suggestionToConfig(array $suggestion, array $input): array
+    {
+        $identity = is_array($input['identity'] ?? null) ? $input['identity'] : [];
+        $request = is_array($input['request'] ?? null) ? $input['request'] : [];
+
+        $params = [];
+        foreach (is_array($suggestion['parameters'] ?? null) ? $suggestion['parameters'] : [] as $index => $p) {
+            if (! is_array($p)) {
+                continue;
+            }
+            $params[] = ['sort_order' => $index] + $p;
+        }
+
+        return [
+            'identity' => [
+                'name' => $suggestion['tool_name'] ?? ($identity['name'] ?? ''),
+                'slug' => null,
+                'description' => $suggestion['tool_description'] ?? ($identity['description'] ?? null),
+                'mode' => $identity['mode'] ?? RouteMode::Tool->value,
+            ],
+            'request' => [
+                'http_method' => $request['http_method'] ?? HttpMethod::GET->value,
+                'url' => $request['url'] ?? '',
+                'auth_profile_id' => $request['auth_profile_id'] ?? null,
+                'params' => $params,
+            ],
+            'response' => [
+                'endpoint_type' => ($suggestion['endpoint_type'] ?? 'unknown') !== 'unknown' ? $suggestion['endpoint_type'] : 'auto',
+                'items_path' => $suggestion['items_path'] ?? null,
+                'transform' => is_array($input['response'] ?? null) ? ($input['response']['transform'] ?? null) : null,
+                'pagination' => $suggestion['pagination'] ?? null,
+            ],
+            'options' => is_array($input['options'] ?? null) ? $input['options'] : [],
+        ];
+    }
+
     /**
      * "Configura con AI" — one pass that proposes the FULL route configuration
      * from a test call: deterministic endpoint_type/items_path + heuristic
@@ -609,6 +890,8 @@ final class ConnectorAdminService
      * parameters and (fallback) pagination. Returns a SUGGESTION the operator
      * reviews + applies via {@see updateRoute}; nothing is persisted here. A
      * non-JSON / failed call yields `suggestion = null` (R14).
+     *
+     * @deprecated superseded by {@see self::produceConfig()} (config-JSON pivot).
      *
      * @param  array<string,mixed>  $exampleArgs
      * @return array{result: TestResult, suggestion: array<string,mixed>|null}

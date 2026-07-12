@@ -93,6 +93,11 @@ final class ConnectorAdminServiceTest extends TestCase
                 return null;
             }
 
+            public function produceConfig(array $context): ?array
+            {
+                return null;
+            }
+
             public function suggestConfiguration(array $context): ?array
             {
                 return null;
@@ -123,6 +128,11 @@ final class ConnectorAdminServiceTest extends TestCase
             }
 
             public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
+
+            public function produceConfig(array $context): ?array
             {
                 return null;
             }
@@ -246,6 +256,11 @@ final class ConnectorAdminServiceTest extends TestCase
                 return null;
             }
 
+            public function produceConfig(array $context): ?array
+            {
+                return null;
+            }
+
             public function suggestConfiguration(array $context): ?array
             {
                 return [
@@ -284,6 +299,11 @@ final class ConnectorAdminServiceTest extends TestCase
             }
 
             public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
+
+            public function produceConfig(array $context): ?array
             {
                 return null;
             }
