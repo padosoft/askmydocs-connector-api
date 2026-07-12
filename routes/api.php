@@ -82,9 +82,11 @@ Route::name('api-connectors.')->group(function (): void {
     // Workbench "Cerca" — fire with search params (item 6).
     Route::post('routes/{route}/test-search', [ApiRouteController::class, 'testSearch'])
         ->whereNumber('route')->name('routes.test-search');
-    // Workbench "Configura con AI" — propose the full route configuration.
+    // Workbench "Configura con AI" — propose (preview) + one-shot detect/apply/test.
     Route::post('routes/{route}/ai-configure', [ApiRouteController::class, 'aiConfigure'])
         ->whereNumber('route')->name('routes.ai-configure');
+    Route::post('routes/{route}/ai-configure-apply', [ApiRouteController::class, 'aiConfigureApply'])
+        ->whereNumber('route')->name('routes.ai-configure-apply');
 
     // Relations (List → Detail) — spec Obj 3
     Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])

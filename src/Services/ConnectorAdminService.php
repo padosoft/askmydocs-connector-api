@@ -645,6 +645,66 @@ final class ConnectorAdminService
         ];
     }
 
+    /**
+     * ONE-SHOT "Configura con AI": detect → apply → final test. Runs
+     * {@see autoConfigure}, PERSISTS the suggestion onto the route (parameters
+     * forced non-required so the verification call can't fail on a missing arg —
+     * the operator tightens later), runs the real test (which infers the schema +
+     * promotes draft→tested), and, when a pagination scheme was set, verifies it
+     * advances. Everything the workbench used to need across many steps, in one.
+     *
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{applied: array<string,mixed>|null, final_test: TestResult, pagination_test: array<string,mixed>|null}
+     */
+    public function applyAiConfiguration(ApiRoute $route, array $exampleArgs = []): array
+    {
+        $auto = $this->autoConfigure($route, $exampleArgs);
+        /** @var TestResult $probe */
+        $probe = $auto['result'];
+        $suggestion = $auto['suggestion'];
+
+        if ($suggestion === null) {
+            return ['applied' => null, 'final_test' => $probe, 'pagination_test' => null];
+        }
+
+        $payload = [
+            'items_path' => $suggestion['items_path'],
+            'pagination' => $suggestion['pagination'],
+            // Non-required so the immediate verification call can't fail on a
+            // missing llm arg; the operator can re-mark them required afterwards.
+            'parameters' => array_map(
+                static fn (array $p): array => ['required' => false] + $p,
+                is_array($suggestion['parameters']) ? $suggestion['parameters'] : [],
+            ),
+        ];
+        if (($suggestion['endpoint_type'] ?? 'unknown') !== 'unknown') {
+            $payload['endpoint_type'] = $suggestion['endpoint_type'];
+        }
+        if (is_string($suggestion['tool_name'] ?? null) && $suggestion['tool_name'] !== '') {
+            $payload['slug'] = $suggestion['tool_name'];
+        }
+        if (is_string($suggestion['tool_description'] ?? null) && $suggestion['tool_description'] !== '') {
+            $payload['description'] = $suggestion['tool_description'];
+        }
+
+        $route = $this->updateRoute($route, $payload);
+
+        // Final test — infers the input/output schema + tool definition and
+        // promotes the route to `tested`, ready to activate.
+        $final = $this->testRoute($route, $exampleArgs);
+        /** @var TestResult $finalResult */
+        $finalResult = $final['result'];
+
+        $paginationTest = null;
+        $pagination = $suggestion['pagination'];
+        if (is_array($pagination) && ($pagination['type'] ?? 'none') !== 'none') {
+            $fresh = $route->fresh(['parameters']) ?? $route;
+            $paginationTest = $this->testPagination($fresh, $pagination, $exampleArgs);
+        }
+
+        return ['applied' => $suggestion, 'final_test' => $finalResult, 'pagination_test' => $paginationTest];
+    }
+
     /* ----------------------------------------------------------------------
      | Relations (List → Detail) — spec Obj 3
      * -------------------------------------------------------------------- */

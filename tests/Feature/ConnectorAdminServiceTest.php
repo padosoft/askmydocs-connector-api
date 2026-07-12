@@ -272,6 +272,51 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->assertSame('q', $s['parameters'][0]['name']);
     }
 
+    public function test_apply_ai_configuration_configures_and_finally_tests_in_one_shot(): void
+    {
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1, 'name' => 'x']]], 200)]);
+        $this->app->bind(ResponseAnalyst::class, fn (): ResponseAnalyst => new class implements ResponseAnalyst
+        {
+            public function analyze(array $context): ?string
+            {
+                return null;
+            }
+
+            public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
+
+            public function suggestConfiguration(array $context): ?array
+            {
+                return [
+                    'tool_name' => 'list_catalog',
+                    'tool_description' => 'List the catalog.',
+                    // AI says required; the one-shot forces non-required so the final test can't fail on it.
+                    'parameters' => [['name' => 'q', 'location' => 'query', 'source' => 'llm', 'type' => 'string', 'required' => true]],
+                ];
+            }
+        });
+        $service = $this->app->make(ConnectorAdminService::class);
+        $connector = $service->createConnector(['name' => 'C1']);
+        $route = $service->createRoute($connector, [
+            'name' => 'Catalog', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $service->applyAiConfiguration($route, []);
+
+        $this->assertNotNull($out['applied']);
+        $this->assertTrue($out['final_test']->ok);
+
+        $fresh = $route->fresh(['parameters']);
+        $this->assertSame(EndpointType::List, $fresh->endpoint_type);
+        $this->assertSame('list_catalog', $fresh->slug);
+        $this->assertCount(1, $fresh->parameters);
+        $this->assertFalse($fresh->parameters[0]->required);       // forced non-required
+        $this->assertSame(RouteStatus::Tested, $fresh->status);    // final test promoted it
+    }
+
     public function test_find_connector_is_tenant_scoped(): void
     {
         $connector = $this->service->createConnector(['name' => 'C1']);

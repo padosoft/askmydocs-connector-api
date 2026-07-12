@@ -269,6 +269,26 @@ final class ApiRouteController extends Controller
     }
 
     /**
+     * "Configura con AI" ONE-SHOT — detect + apply + final test in one call.
+     * Returns what was applied, the final test outcome (the route is now
+     * `tested`), and the pagination verdict when a scheme was configured.
+     * `applied` is null when the call returned no JSON (R14).
+     */
+    public function aiConfigureApply(TestRouteRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+        $out = $this->service->applyAiConfiguration($model, $request->exampleArgs());
+        /** @var TestResult $final */
+        $final = $out['final_test'];
+
+        return response()->json([
+            'applied' => $out['applied'],
+            'final_test' => $this->testPayload($final),
+            'pagination_test' => $out['pagination_test'],
+        ]);
+    }
+
+    /**
      * @return array<string,mixed>
      */
     private function probePayload(TestResult $result): array
