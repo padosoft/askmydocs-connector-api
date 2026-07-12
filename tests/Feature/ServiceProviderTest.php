@@ -43,12 +43,13 @@ final class ServiceProviderTest extends TestCase
         $this->assertIsBool(config('connector-api.chat_tools.enabled'));
     }
 
-    public function test_both_artisan_commands_are_registered(): void
+    public function test_artisan_commands_are_registered(): void
     {
         $commands = array_keys(Artisan::all());
 
         $this->assertContains('api-connector:list', $commands);
         $this->assertContains('api-connector:test', $commands);
+        $this->assertContains('api-connector:show-config', $commands);
     }
 
     public function test_admin_routes_are_registered_under_the_default_prefix(): void

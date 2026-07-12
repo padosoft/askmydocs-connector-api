@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand;
+use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorShowConfigCommand;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
@@ -130,6 +131,7 @@ class ApiConnectorServiceProvider extends ServiceProvider
     {
         $this->commands([
             ApiConnectorListCommand::class,
+            ApiConnectorShowConfigCommand::class,
             ApiConnectorTestCommand::class,
         ]);
     }
