@@ -7,6 +7,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Services;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Exceptions\ApiConnectorException;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
@@ -43,6 +44,7 @@ final class ConnectorAdminService
         private readonly ApiToolExecutor $executor,
         private readonly RelationMapper $relationMapper,
         private readonly StructureReducer $structureReducer,
+        private readonly ResponseAnalyst $analyst,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -411,17 +413,30 @@ final class ConnectorAdminService
 
         $reduced = null;
         $notes = [];
+        $analysis = null;
         if ($result->isJson) {
             $reduction = $this->structureReducer->reduce($result->body);
             $reduced = $reduction['reduced'];
             $notes = $reduction['notes'];
+
+            // AI narration of the reduced structure — optional, best-effort, and
+            // gated (llm_assist off / Null analyst → stays null; the reduced view
+            // is always shown regardless).
+            if ((bool) config('connector-api.llm_assist.enabled', true)) {
+                $analysis = $this->analyst->analyze([
+                    'method' => $route->http_method->value,
+                    'url' => $route->url,
+                    'reduced' => $reduced,
+                    'notes' => $notes,
+                ]);
+            }
         }
 
         return [
             'result' => $result,
             'reduced' => $reduced,
             'notes' => $notes,
-            'analysis' => null,
+            'analysis' => $analysis,
         ];
     }
 

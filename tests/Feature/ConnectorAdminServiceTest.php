@@ -7,6 +7,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Tests\Feature;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
@@ -69,9 +70,56 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->assertSame(['id' => 1, 'name' => 'n1'], $out['reduced']['data'][0]);
         $this->assertSame('data', $out['notes'][0]['path']);
         $this->assertSame(50, $out['notes'][0]['total']);
-        // P1: no AI narration yet, and dryRun did NOT persist last_test_*.
+        // With the default Null analyst there is no AI narration, and dryRun did
+        // NOT persist last_test_*.
         $this->assertNull($out['analysis']);
         $this->assertNull($route->fresh()->last_test_at);
+    }
+
+    public function test_analyze_route_adds_ai_narration_when_an_analyst_is_bound(): void
+    {
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200)]);
+        $this->app->bind(ResponseAnalyst::class, fn (): ResponseAnalyst => new class implements ResponseAnalyst
+        {
+            public function analyze(array $context): ?string
+            {
+                return 'A collection of items lives under `data`.';
+            }
+        });
+        $service = $this->app->make(ConnectorAdminService::class);
+        $connector = $service->createConnector(['name' => 'C1']);
+        $route = $service->createRoute($connector, [
+            'name' => 'Catalog', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $service->analyzeRoute($route, []);
+
+        $this->assertSame('A collection of items lives under `data`.', $out['analysis']);
+    }
+
+    public function test_analyze_route_skips_the_ai_when_llm_assist_is_disabled(): void
+    {
+        config()->set('connector-api.llm_assist.enabled', false);
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200)]);
+        // An analyst that would throw if called — proves the gate short-circuits it.
+        $this->app->bind(ResponseAnalyst::class, fn (): ResponseAnalyst => new class implements ResponseAnalyst
+        {
+            public function analyze(array $context): ?string
+            {
+                throw new RuntimeException('analyst must not be called when llm_assist is off');
+            }
+        });
+        $service = $this->app->make(ConnectorAdminService::class);
+        $connector = $service->createConnector(['name' => 'C1']);
+        $route = $service->createRoute($connector, [
+            'name' => 'Catalog', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $service->analyzeRoute($route, []);
+
+        $this->assertNull($out['analysis']);
     }
 
     public function test_find_connector_is_tenant_scoped(): void

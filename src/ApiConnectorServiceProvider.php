@@ -9,7 +9,9 @@ use Illuminate\Support\ServiceProvider;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand;
+use Padosoft\AskMyDocsConnectorApi\Contracts\NullResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant;
 use Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor;
 use Padosoft\AskMyDocsConnectorApi\Services\ApiToolRegistry;
@@ -85,6 +87,13 @@ class ApiConnectorServiceProvider extends ServiceProvider
         // No-op assistant by default; the host rebinds it to an AI-backed impl.
         if (! $this->app->bound(ToolDescriptionAssistant::class)) {
             $this->app->bind(ToolDescriptionAssistant::class, NullToolDescriptionAssistant::class);
+        }
+
+        // No-op response analyst by default (workbench "Analisi"); the host
+        // rebinds it to an AI-backed impl. The reduced structure is always shown
+        // regardless — the analyst only adds the optional narration.
+        if (! $this->app->bound(ResponseAnalyst::class)) {
+            $this->app->bind(ResponseAnalyst::class, NullResponseAnalyst::class);
         }
 
         // RequestPlanner, OutputTransformer, HttpDispatcher, SchemaInferrer,
