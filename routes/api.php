@@ -74,6 +74,11 @@ Route::name('api-connectors.')->group(function (): void {
     // Workbench "Analisi" — fire the route + return a reduced structure (item 3).
     Route::post('routes/{route}/analyze', [ApiRouteController::class, 'analyze'])
         ->whereNumber('route')->name('routes.analyze');
+    // Workbench "Paginazione" — detect (items 4) + test (item 5).
+    Route::post('routes/{route}/detect-pagination', [ApiRouteController::class, 'detectPagination'])
+        ->whereNumber('route')->name('routes.detect-pagination');
+    Route::post('routes/{route}/test-pagination', [ApiRouteController::class, 'testPagination'])
+        ->whereNumber('route')->name('routes.test-pagination');
 
     // Relations (List → Detail) — spec Obj 3
     Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])

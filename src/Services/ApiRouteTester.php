@@ -52,10 +52,11 @@ final class ApiRouteTester
      * only wants the raw response — not to mutate the detail route's state.
      *
      * @param  array<string,mixed>  $exampleArgs
+     * @param  array<string,mixed>  $extraQuery  ad-hoc query overrides (pagination / search), merged post-plan
      */
-    public function dryRun(ApiRoute $route, array $exampleArgs = []): TestResult
+    public function dryRun(ApiRoute $route, array $exampleArgs = [], array $extraQuery = []): TestResult
     {
-        return $this->run($route, $exampleArgs);
+        return $this->run($route, $exampleArgs, $extraQuery);
     }
 
     /**
@@ -93,12 +94,13 @@ final class ApiRouteTester
 
     /**
      * @param  array<string,mixed>  $exampleArgs
+     * @param  array<string,mixed>  $extraQuery
      */
-    private function run(ApiRoute $route, array $exampleArgs): TestResult
+    private function run(ApiRoute $route, array $exampleArgs, array $extraQuery = []): TestResult
     {
         try {
             $profile = $route->effectiveAuthProfile();
-            $plan = $this->planner->plan($route, $exampleArgs, $profile);
+            $plan = $this->planner->plan($route, $exampleArgs, $profile)->withMergedQuery($extraQuery);
             $material = $this->authFactory->materialFor($profile);
             $timeoutMs = $route->timeout_ms ?? (int) config('connector-api.defaults.timeout_ms', 10000);
         } catch (Throwable $e) {

@@ -26,4 +26,27 @@ final class RequestPlan
         public readonly ?array $body = null,
         public readonly array $loggableParams = [],
     ) {}
+
+    /**
+     * A copy with ad-hoc query params merged in (pagination page/cursor, search
+     * overrides). Diagnostic-only: these bypass the declared-param binding, so
+     * they never touch `loggableParams`. Merged values win over the declared query.
+     *
+     * @param  array<string,mixed>  $extra
+     */
+    public function withMergedQuery(array $extra): self
+    {
+        if ($extra === []) {
+            return $this;
+        }
+
+        return new self(
+            $this->method,
+            $this->url,
+            array_merge($this->query, $extra),
+            $this->headers,
+            $this->body,
+            $this->loggableParams,
+        );
+    }
 }

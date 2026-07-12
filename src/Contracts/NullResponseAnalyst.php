@@ -14,4 +14,9 @@ final class NullResponseAnalyst implements ResponseAnalyst
     {
         return null;
     }
+
+    public function detectPagination(array $context): ?array
+    {
+        return null;
+    }
 }

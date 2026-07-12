@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestPaginationRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\UpdateRouteRequest;
@@ -209,6 +210,31 @@ final class ApiRouteController extends Controller
             'notes' => $outcome['notes'],
             'analysis' => $outcome['analysis'],
         ]);
+    }
+
+    /**
+     * Workbench "Paginazione" — guess the pagination scheme (heuristic + AI
+     * fallback). Non-persisting; the operator confirms/edits then saves via PATCH.
+     */
+    public function detectPagination(TestRouteRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+        $out = $this->service->detectPagination($model, $request->exampleArgs());
+
+        return response()->json(['config' => $out['config'], 'source' => $out['source']]);
+    }
+
+    /**
+     * Workbench "Paginazione" — fire two pages with the given config and report
+     * whether page 2 advances (item counts + verdict). Non-persisting.
+     */
+    public function testPagination(TestPaginationRequest $request, int $route): JsonResponse
+    {
+        $model = $this->service->findRoute($route);
+
+        return response()->json(
+            $this->service->testPagination($model, $request->pagination(), $request->exampleArgs()),
+        );
     }
 
     /**

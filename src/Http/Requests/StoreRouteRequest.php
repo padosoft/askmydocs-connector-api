@@ -45,6 +45,7 @@ final class StoreRouteRequest extends FormRequest
             'cache_ttl_s' => ['nullable', 'integer', 'min:0'],
             'rate_limit' => ['nullable', 'integer', 'min:0'],
             'output_transform' => ['nullable', 'array'],
+            'pagination' => ['nullable', 'array'],
         ], $this->routeParameterRules(required: false));
     }
 }

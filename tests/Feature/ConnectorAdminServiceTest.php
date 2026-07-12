@@ -85,6 +85,11 @@ final class ConnectorAdminServiceTest extends TestCase
             {
                 return 'A collection of items lives under `data`.';
             }
+
+            public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
         });
         $service = $this->app->make(ConnectorAdminService::class);
         $connector = $service->createConnector(['name' => 'C1']);
@@ -109,6 +114,11 @@ final class ConnectorAdminServiceTest extends TestCase
             {
                 throw new RuntimeException('analyst must not be called when llm_assist is off');
             }
+
+            public function detectPagination(array $context): ?array
+            {
+                return null;
+            }
         });
         $service = $this->app->make(ConnectorAdminService::class);
         $connector = $service->createConnector(['name' => 'C1']);
@@ -120,6 +130,75 @@ final class ConnectorAdminServiceTest extends TestCase
         $out = $service->analyzeRoute($route, []);
 
         $this->assertNull($out['analysis']);
+    }
+
+    public function test_detect_pagination_finds_a_page_param_from_the_url(): void
+    {
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200)]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/list?page=1&per_page=10', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $this->service->detectPagination($route, []);
+
+        $this->assertSame('heuristic', $out['source']);
+        $this->assertSame('page', $out['config']['type']);
+        $this->assertSame('page', $out['config']['page_param']);
+        $this->assertSame('per_page', $out['config']['size_param']);
+    }
+
+    public function test_test_pagination_page_detects_distinct_pages(): void
+    {
+        Http::fake(['api.example.com/*' => Http::sequence()
+            ->push(['data' => [['id' => 1], ['id' => 2]]], 200)
+            ->push(['data' => [['id' => 3], ['id' => 4]]], 200)]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/list', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $this->service->testPagination($route, [
+            'type' => 'page', 'page_param' => 'page', 'start_page' => 1, 'items_path' => 'data',
+        ], []);
+
+        $this->assertTrue($out['distinct']);
+        $this->assertCount(2, $out['pages']);
+        $this->assertSame(2, $out['pages'][0]['item_count']);
+        $this->assertStringContainsString('funziona', $out['note']);
+    }
+
+    public function test_test_pagination_cursor_reports_a_missing_cursor(): void
+    {
+        // Body carries no cursor at the configured path → honest "not found" verdict.
+        Http::fake(['api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200)]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/list', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $this->service->testPagination($route, [
+            'type' => 'cursor', 'cursor_param' => 'cursor', 'next_cursor_path' => 'meta.next_cursor', 'items_path' => 'data',
+        ], []);
+
+        $this->assertFalse($out['distinct']);
+        $this->assertStringContainsString('Cursore non trovato', $out['note']);
+    }
+
+    public function test_update_route_persists_the_pagination_config(): void
+    {
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/list', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $this->service->updateRoute($route, ['pagination' => ['type' => 'page', 'page_param' => 'page']]);
+
+        $this->assertSame(['type' => 'page', 'page_param' => 'page'], $route->fresh()->pagination);
     }
 
     public function test_find_connector_is_tenant_scoped(): void

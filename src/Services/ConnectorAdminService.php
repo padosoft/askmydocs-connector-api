@@ -16,6 +16,7 @@ use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
+use Padosoft\AskMyDocsConnectorApi\Support\PaginationDetector;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
 use Padosoft\AskMyDocsConnectorApi\Support\RelationMapper;
@@ -45,6 +46,7 @@ final class ConnectorAdminService
         private readonly RelationMapper $relationMapper,
         private readonly StructureReducer $structureReducer,
         private readonly ResponseAnalyst $analyst,
+        private readonly PaginationDetector $paginationDetector,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -440,6 +442,150 @@ final class ConnectorAdminService
         ];
     }
 
+    /**
+     * Guess the endpoint's pagination scheme (spec item 4): a non-persisting
+     * dryRun → the deterministic {@see PaginationDetector} → the AI fallback when
+     * unclear (gated by llm_assist). Returns a config the operator confirms/edits
+     * then saves via {@see updateRoute}; nothing is persisted here.
+     *
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{config: array<string,mixed>|null, source: string}
+     */
+    public function detectPagination(ApiRoute $route, array $exampleArgs = []): array
+    {
+        $route->loadMissing('parameters');
+        $result = $this->tester->dryRun($route, $exampleArgs);
+        if (! $result->isJson) {
+            return ['config' => null, 'source' => 'none'];
+        }
+
+        $config = $this->paginationDetector->detect($route, $result->body);
+        if ($config !== null) {
+            return ['config' => $config, 'source' => 'heuristic'];
+        }
+
+        if ((bool) config('connector-api.llm_assist.enabled', true)) {
+            $reduced = $this->structureReducer->reduce($result->body)['reduced'];
+            $aiConfig = $this->analyst->detectPagination([
+                'method' => $route->http_method->value,
+                'url' => $route->url,
+                'reduced' => $reduced,
+            ]);
+            if ($aiConfig !== null) {
+                return ['config' => $aiConfig, 'source' => 'ai'];
+            }
+        }
+
+        return ['config' => null, 'source' => 'none'];
+    }
+
+    /**
+     * Fire two pages with the given pagination config and report whether page 2
+     * actually advances (spec item 5). Page-number → increments `page_param`;
+     * cursor → reads the next cursor from page 1's body via `next_cursor_path`
+     * and resends it. Non-persisting; SSRF still fires inside each dryRun.
+     *
+     * @param  array<string,mixed>  $config
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{pages: list<array<string,mixed>>, distinct: bool, note: string}
+     */
+    public function testPagination(ApiRoute $route, array $config, array $exampleArgs = []): array
+    {
+        $route->loadMissing('parameters');
+        $type = is_string($config['type'] ?? null) ? $config['type'] : 'none';
+        $itemsPath = is_string($config['items_path'] ?? null)
+            ? $config['items_path']
+            : (is_string($route->items_path) ? $route->items_path : '');
+
+        if ($type === 'page') {
+            $pageParam = (string) ($config['page_param'] ?? 'page');
+            $start = (int) ($config['start_page'] ?? 1);
+            $r1 = $this->tester->dryRun($route, $exampleArgs, [$pageParam => $start]);
+            $r2 = $this->tester->dryRun($route, $exampleArgs, [$pageParam => $start + 1]);
+
+            return $this->paginationVerdict($r1, $r2, $itemsPath, "pagina {$start} → ".($start + 1));
+        }
+
+        if ($type === 'cursor') {
+            $r1 = $this->tester->dryRun($route, $exampleArgs);
+            $cursor = $r1->isJson && isset($config['next_cursor_path'])
+                ? $this->valueAtPath($r1->body, (string) $config['next_cursor_path'])
+                : null;
+
+            if (! is_string($cursor) && ! is_int($cursor) || $cursor === '') {
+                $where = (string) ($config['next_cursor_path'] ?? $config['next_url_path'] ?? '?');
+
+                return [
+                    'pages' => [$this->pageSummary($r1, $itemsPath)],
+                    'distinct' => false,
+                    'note' => "Cursore non trovato in `{$where}` — forse è l'ultima pagina o il path va corretto.",
+                ];
+            }
+
+            $cursorParam = (string) ($config['cursor_param'] ?? 'cursor');
+            $r2 = $this->tester->dryRun($route, $exampleArgs, [$cursorParam => (string) $cursor]);
+
+            return $this->paginationVerdict($r1, $r2, $itemsPath, 'cursor');
+        }
+
+        return ['pages' => [], 'distinct' => false, 'note' => 'Tipo di paginazione non impostato.'];
+    }
+
+    /**
+     * @return array{pages: list<array<string,mixed>>, distinct: bool, note: string}
+     */
+    private function paginationVerdict(TestResult $r1, TestResult $r2, string $itemsPath, string $label): array
+    {
+        $items1 = $r1->isJson ? $this->relationMapper->itemsAt($r1->body, $itemsPath) : [];
+        $items2 = $r2->isJson ? $this->relationMapper->itemsAt($r2->body, $itemsPath) : [];
+        $distinct = $r2->ok && $items2 !== [] && json_encode($items2) !== json_encode($items1);
+
+        if (! $r2->ok) {
+            $note = "Pagina 2 ha fallito (HTTP {$r2->status}).";
+        } elseif ($distinct) {
+            $note = "Le due pagine restituiscono item diversi ({$label}) — la paginazione funziona.";
+        } else {
+            $note = "Pagina 2 identica o vuota ({$label}) — la paginazione potrebbe non essere applicata.";
+        }
+
+        return [
+            'pages' => [$this->pageSummary($r1, $itemsPath), $this->pageSummary($r2, $itemsPath)],
+            'distinct' => $distinct,
+            'note' => $note,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function pageSummary(TestResult $result, string $itemsPath): array
+    {
+        $items = $result->isJson ? $this->relationMapper->itemsAt($result->body, $itemsPath) : [];
+
+        return [
+            'ok' => $result->ok,
+            'status' => $result->status,
+            'item_count' => count($items),
+        ];
+    }
+
+    private function valueAtPath(mixed $body, string $path): mixed
+    {
+        if (! is_array($body) || $path === '') {
+            return null;
+        }
+
+        $node = $body;
+        foreach (explode('.', $path) as $segment) {
+            if (! is_array($node) || ! array_key_exists($segment, $node)) {
+                return null;
+            }
+            $node = $node[$segment];
+        }
+
+        return $node;
+    }
+
     /* ----------------------------------------------------------------------
      | Relations (List → Detail) — spec Obj 3
      * -------------------------------------------------------------------- */
@@ -615,6 +761,9 @@ final class ConnectorAdminService
         $route->rate_limit = array_key_exists('rate_limit', $data) ? $data['rate_limit'] : $route->rate_limit;
         if (array_key_exists('output_transform', $data)) {
             $route->output_transform = $this->arrayOrNull($data['output_transform']);
+        }
+        if (array_key_exists('pagination', $data)) {
+            $route->pagination = $this->arrayOrNull($data['pagination']);
         }
         $this->applyEndpointType($route, $data);
 

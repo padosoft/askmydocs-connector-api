@@ -44,6 +44,7 @@ final class UpdateRouteRequest extends FormRequest
             'cache_ttl_s' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'rate_limit' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'output_transform' => ['sometimes', 'nullable', 'array'],
+            'pagination' => ['sometimes', 'nullable', 'array'],
         ], $this->routeParameterRules(required: false));
     }
 }

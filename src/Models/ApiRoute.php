@@ -34,6 +34,7 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property array<string,mixed>|null $param_mapping
  * @property array<string,mixed>|null $tool_definition
  * @property array<string,mixed>|null $output_transform
+ * @property array<string,mixed>|null $pagination
  * @property RouteMode $mode
  * @property RouteStatus $status
  * @property EndpointType $endpoint_type
@@ -77,6 +78,7 @@ class ApiRoute extends Model
         'param_mapping',
         'tool_definition',
         'output_transform',
+        'pagination',
         'mode',
         'status',
         'endpoint_type',
@@ -103,6 +105,7 @@ class ApiRoute extends Model
         'param_mapping' => 'array',
         'tool_definition' => 'array',
         'output_transform' => 'array',
+        'pagination' => 'array',
         'last_test_payload' => 'array',
         'last_test_at' => 'datetime',
         'auth_profile_id' => 'integer',
