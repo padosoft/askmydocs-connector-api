@@ -45,6 +45,11 @@ final class ApiRouteRelationResource extends JsonResource
     }
 
     /**
+     * The compact side of a relation. Reads id + name + slug + endpoint_type, so
+     * any eager load that feeds this stub MUST select all four columns
+     * (endpoint_type is NOT NULL, but a partial `:id,slug` select would leave the
+     * enum unset and 500 here). See ConnectorAdminService::listConnectors().
+     *
      * @return array<string,mixed>
      */
     private function routeStub(ApiRoute $route): array

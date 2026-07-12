@@ -92,8 +92,16 @@ final class ConnectorAdminService
      */
     public function listConnectors(): Collection
     {
+        // The relation route stubs render {id, name, slug, endpoint_type}; the
+        // partial select MUST carry every column the stub reads (id for the FK
+        // match + name + slug + endpoint_type), else the resource dereferences a
+        // null enum. Keep in lockstep with ApiRouteRelationResource::routeStub().
         $query = ApiConnector::forTenant($this->currentTenant())
-            ->with(['routes', 'relations.listRoute:id,slug', 'relations.detailRoute:id,slug']);
+            ->with([
+                'routes',
+                'relations.listRoute:id,name,slug,endpoint_type',
+                'relations.detailRoute:id,name,slug,endpoint_type',
+            ]);
         $query->orderBy('name');
 
         return $query->get();

@@ -145,4 +145,22 @@ final class RelationHttpTest extends TestCase
 
         $this->assertDatabaseMissing('api_route_relations', ['id' => $relationId]);
     }
+
+    public function test_connectors_index_renders_relation_route_stubs_without_500(): void
+    {
+        // Regression: listConnectors eager-loads the relation routes with a
+        // partial column select; the stub reads endpoint_type, so the select must
+        // carry it or the resource dereferences a null enum (was a 500).
+        $this->postJson(self::PREFIX."/{$this->connector->id}/relations", [
+            'list_route_id' => $this->list->id,
+            'detail_route_id' => $this->detail->id,
+            'field_map' => [['from' => 'id', 'to_param' => 'id']],
+        ])->assertStatus(201);
+
+        $this->getJson(self::PREFIX)
+            ->assertStatus(200)
+            ->assertJsonPath('data.0.relations.0.list_route.name', 'List users')
+            ->assertJsonPath('data.0.relations.0.list_route.endpoint_type', 'list')
+            ->assertJsonPath('data.0.relations.0.detail_route.endpoint_type', 'detail');
+    }
 }
