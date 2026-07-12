@@ -13,6 +13,7 @@ use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
+use Padosoft\AskMyDocsConnectorApi\Support\UrlGuard;
 use Padosoft\AskMyDocsConnectorApi\Tests\TestCase;
 use Padosoft\AskMyDocsConnectorBase\Support\TenantContext;
 use RuntimeException;
@@ -315,6 +316,44 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->assertCount(1, $fresh->parameters);
         $this->assertFalse($fresh->parameters[0]->required);       // forced non-required
         $this->assertSame(RouteStatus::Tested, $fresh->status);    // final test promoted it
+    }
+
+    public function test_apply_ai_configuration_reads_from_openapi_when_a_spec_url_is_given(): void
+    {
+        Http::fake([
+            'api.docs.example/*' => Http::response([
+                'openapi' => '3.0.0',
+                'servers' => [['url' => 'https://api.example.com']],
+                'paths' => ['/catalog' => ['get' => [
+                    'operationId' => 'listCatalog',
+                    'summary' => 'List the catalog.',
+                    'parameters' => [['name' => 'q', 'in' => 'query', 'schema' => ['type' => 'string']]],
+                    'responses' => ['200' => ['content' => ['application/json' => ['schema' => [
+                        'type' => 'object', 'properties' => ['data' => ['type' => 'array', 'items' => ['type' => 'object']]],
+                    ]]]]],
+                ]]],
+            ], 200),
+            'api.example.com/*' => Http::response(['data' => [['id' => 1]]], 200),
+        ]);
+        // Deterministic — no live SSRF resolution in the test.
+        $this->app->instance(UrlGuard::class, new UrlGuard(enabled: false));
+        $service = $this->app->make(ConnectorAdminService::class);
+        $connector = $service->createConnector(['name' => 'C1']);
+        $route = $service->createRoute($connector, [
+            'name' => 'Catalog', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/catalog', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $out = $service->applyAiConfiguration($route, [], 'https://api.docs.example/openapi.json');
+
+        $this->assertSame('openapi', $out['source']);
+        $fresh = $route->fresh(['parameters']);
+        $this->assertSame('listcatalog', $fresh->slug); // operationId normalised to a slug
+        $this->assertSame('List the catalog.', $fresh->description);
+        $this->assertSame('list', $fresh->endpoint_type->value);
+        $this->assertSame('data', $fresh->items_path);
+        $this->assertCount(1, $fresh->parameters);
+        $this->assertSame('q', $fresh->parameters[0]->name);
     }
 
     public function test_find_connector_is_tenant_scoped(): void

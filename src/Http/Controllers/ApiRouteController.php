@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\AiConfigureApplyRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestPaginationRequest;
@@ -274,10 +275,16 @@ final class ApiRouteController extends Controller
      * `tested`), and the pagination verdict when a scheme was configured.
      * `applied` is null when the call returned no JSON (R14).
      */
-    public function aiConfigureApply(TestRouteRequest $request, int $route): JsonResponse
+    public function aiConfigureApply(AiConfigureApplyRequest $request, int $route): JsonResponse
     {
         $model = $this->service->findRoute($route);
-        $out = $this->service->applyAiConfiguration($model, $request->exampleArgs());
+
+        try {
+            $out = $this->service->applyAiConfiguration($model, $request->exampleArgs(), $request->openApiUrl());
+        } catch (RuntimeException $e) {
+            return $this->failure($e); // OpenAPI fetch/parse/SSRF failure → 422
+        }
+
         /** @var TestResult $final */
         $final = $out['final_test'];
 
@@ -285,6 +292,7 @@ final class ApiRouteController extends Controller
             'applied' => $out['applied'],
             'final_test' => $this->testPayload($final),
             'pagination_test' => $out['pagination_test'],
+            'source' => $out['source'],
         ]);
     }
 

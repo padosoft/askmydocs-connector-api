@@ -16,6 +16,7 @@ use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation;
 use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
+use Padosoft\AskMyDocsConnectorApi\Support\OpenApiImporter;
 use Padosoft\AskMyDocsConnectorApi\Support\PaginationDetector;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
@@ -47,6 +48,7 @@ final class ConnectorAdminService
         private readonly StructureReducer $structureReducer,
         private readonly ResponseAnalyst $analyst,
         private readonly PaginationDetector $paginationDetector,
+        private readonly OpenApiImporter $openApiImporter,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -654,27 +656,42 @@ final class ConnectorAdminService
      * advances. Everything the workbench used to need across many steps, in one.
      *
      * @param  array<string,mixed>  $exampleArgs
-     * @return array{applied: array<string,mixed>|null, final_test: TestResult, pagination_test: array<string,mixed>|null}
+     * @return array{applied: array<string,mixed>|null, final_test: TestResult, pagination_test: array<string,mixed>|null, source: string}
      */
-    public function applyAiConfiguration(ApiRoute $route, array $exampleArgs = []): array
+    public function applyAiConfiguration(ApiRoute $route, array $exampleArgs = [], ?string $openApiUrl = null): array
     {
-        $auto = $this->autoConfigure($route, $exampleArgs);
-        /** @var TestResult $probe */
-        $probe = $auto['result'];
-        $suggestion = $auto['suggestion'];
+        $route->loadMissing('parameters');
+
+        // Prefer the OpenAPI contract when a spec URL is given (authoritative,
+        // works even when a live call would fail on auth); fall back to the
+        // response-based agent. Importer failures (SSRF / unparseable) bubble as 422.
+        $suggestion = null;
+        $source = 'response';
+        if (is_string($openApiUrl) && $openApiUrl !== '') {
+            $suggestion = $this->openApiImporter->configForRoute($openApiUrl, $route);
+            if ($suggestion !== null) {
+                $source = 'openapi';
+            }
+        }
 
         if ($suggestion === null) {
-            return ['applied' => null, 'final_test' => $probe, 'pagination_test' => null];
+            $auto = $this->autoConfigure($route, $exampleArgs);
+            /** @var TestResult $probe */
+            $probe = $auto['result'];
+            $suggestion = $auto['suggestion'];
+            if ($suggestion === null) {
+                return ['applied' => null, 'final_test' => $probe, 'pagination_test' => null, 'source' => $source];
+            }
         }
 
         $payload = [
-            'items_path' => $suggestion['items_path'],
-            'pagination' => $suggestion['pagination'],
+            'items_path' => $suggestion['items_path'] ?? null,
+            'pagination' => $suggestion['pagination'] ?? null,
             // Non-required so the immediate verification call can't fail on a
             // missing llm arg; the operator can re-mark them required afterwards.
             'parameters' => array_map(
                 static fn (array $p): array => ['required' => false] + $p,
-                is_array($suggestion['parameters']) ? $suggestion['parameters'] : [],
+                is_array($suggestion['parameters'] ?? null) ? $suggestion['parameters'] : [],
             ),
         ];
         if (($suggestion['endpoint_type'] ?? 'unknown') !== 'unknown') {
@@ -696,13 +713,13 @@ final class ConnectorAdminService
         $finalResult = $final['result'];
 
         $paginationTest = null;
-        $pagination = $suggestion['pagination'];
+        $pagination = $suggestion['pagination'] ?? null;
         if (is_array($pagination) && ($pagination['type'] ?? 'none') !== 'none') {
             $fresh = $route->fresh(['parameters']) ?? $route;
             $paginationTest = $this->testPagination($fresh, $pagination, $exampleArgs);
         }
 
-        return ['applied' => $suggestion, 'final_test' => $finalResult, 'pagination_test' => $paginationTest];
+        return ['applied' => $suggestion, 'final_test' => $finalResult, 'pagination_test' => $paginationTest, 'source' => $source];
     }
 
     /* ----------------------------------------------------------------------
