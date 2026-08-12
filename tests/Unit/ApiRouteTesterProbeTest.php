@@ -50,6 +50,21 @@ final class ApiRouteTesterProbeTest extends TestCase
         $this->assertNotNull($result->error);
     }
 
+    public function test_probe_does_not_follow_redirects(): void
+    {
+        Http::fake([
+            'api.example.test/*' => Http::response('', 302, ['Location' => 'http://127.0.0.1/internal']),
+            '*' => Http::response(['leaked' => true], 200),
+        ]);
+
+        $result = $this->tester()->probe(HttpMethod::GET, 'https://api.example.test/redirect');
+
+        $this->assertFalse($result->ok);
+        $this->assertSame(302, $result->status);
+        $this->assertSame('http_302', $result->statusLabel());
+        Http::assertSentCount(1);
+    }
+
     public function test_probe_flags_a_non_json_body(): void
     {
         Http::fake(['*' => Http::response('<html>hi</html>', 200, ['Content-Type' => 'text/html'])]);

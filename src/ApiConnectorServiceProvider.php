@@ -105,8 +105,8 @@ class ApiConnectorServiceProvider extends ServiceProvider
 
     /**
      * Load the admin HTTP routes under the host-configured prefix + middleware
-     * (R32 — the host MUST override the default `api` middleware with its
-     * authenticated admin stack). No-op when `connector-api.routes.enabled` is
+     * (R32 — the package default fails closed, while the host should provide
+     * its authenticated tenant-aware admin stack). No-op when `connector-api.routes.enabled` is
      * false so a deployment can ship the package without the admin surface.
      */
     protected function registerRoutes(): void
@@ -117,7 +117,7 @@ class ApiConnectorServiceProvider extends ServiceProvider
 
         $prefix = (string) config('connector-api.routes.prefix', 'api/admin/api-connectors');
         /** @var array<int,string> $middleware */
-        $middleware = (array) config('connector-api.routes.middleware', ['api']);
+        $middleware = (array) config('connector-api.routes.middleware', ['api', 'auth', 'can:manageConnectors']);
 
         Route::group(['prefix' => $prefix, 'middleware' => $middleware], function (): void {
             $this->loadRoutesFrom(__DIR__.'/../routes/api.php');

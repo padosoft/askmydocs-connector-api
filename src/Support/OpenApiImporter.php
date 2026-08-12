@@ -65,7 +65,9 @@ final class OpenApiImporter
         }
 
         try {
-            $response = Http::timeout(30)->get($url);
+            $response = Http::withOptions(['allow_redirects' => false])
+                ->timeout(30)
+                ->get($url);
         } catch (Throwable $e) {
             throw new RuntimeException("Impossibile scaricare l'OpenAPI: {$e->getMessage()}", 422, $e);
         }

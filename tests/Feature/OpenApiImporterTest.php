@@ -144,4 +144,24 @@ final class OpenApiImporterTest extends TestCase
             $this->route('https://api.shop.example/v1/products'),
         );
     }
+
+    public function test_it_does_not_follow_redirects_while_fetching_a_spec(): void
+    {
+        Http::fake([
+            'api.docs.example/*' => Http::response('', 302, ['Location' => 'http://127.0.0.1/openapi.json']),
+            '*' => Http::response(self::SPEC, 200),
+        ]);
+
+        try {
+            $this->importer()->configForRoute(
+                'https://api.docs.example/openapi.json',
+                $this->route('https://api.shop.example/v1/products'),
+            );
+            $this->fail('The redirect response should not be treated as a valid OpenAPI document.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('HTTP 302', $e->getMessage());
+        }
+
+        Http::assertSentCount(1);
+    }
 }

@@ -61,6 +61,14 @@ final class ServiceProviderTest extends TestCase
         $route = Route::getRoutes()->getByName('api-connectors.index');
         $this->assertNotNull($route);
         $this->assertSame('api/admin/api-connectors', $route->uri());
+        $this->assertContains('auth', $route->gatherMiddleware());
+        $this->assertContains('can:manageConnectors', $route->gatherMiddleware());
+    }
+
+    public function test_default_admin_route_configuration_fails_closed_for_guests(): void
+    {
+        $this->getJson('/api/admin/api-connectors')
+            ->assertUnauthorized();
     }
 
     public function test_shared_singletons_resolve(): void
