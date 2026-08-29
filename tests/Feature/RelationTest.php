@@ -281,4 +281,38 @@ final class RelationTest extends TestCase
 
         $this->assertDatabaseMissing('api_route_relations', ['id' => $relation->id]);
     }
+
+    public function test_deleting_a_route_refreshes_the_surviving_peer(): void
+    {
+        // ApiToolRegistry serves the STORED tool_definition, so a peer whose
+        // description still advertises a drill-down into a deleted route keeps
+        // telling the model it can make a call that cannot succeed -- silently,
+        // until somebody re-tests that peer by hand.
+        //
+        // deleteRelation() already refreshed both peers. Deleting the ROUTE
+        // took a different path, swept the relation rows in bulk, and refreshed
+        // nobody.
+        $this->fakeEndpoints();
+        $this->service->testRoute($this->list->fresh(['parameters']), []);
+        $this->service->testRoute($this->detail->fresh(['parameters']), ['id' => 1]);
+        $this->service->createRelation($this->connector, [
+            'list_route_id' => $this->list->id,
+            'detail_route_id' => $this->detail->id,
+            'field_map' => [['from' => 'id', 'to_param' => 'id']],
+        ]);
+
+        $this->assertStringContainsString(
+            'drilled into',
+            $this->list->fresh()->tool_definition['description'] ?? '',
+            'Precondition: the list route advertises the drill-down.',
+        );
+
+        $this->service->deleteRoute($this->detail->fresh());
+
+        $this->assertStringNotContainsString(
+            'drilled into',
+            $this->list->fresh()->tool_definition['description'] ?? '',
+            'The surviving peer still advertises a chain into the deleted route.',
+        );
+    }
 }

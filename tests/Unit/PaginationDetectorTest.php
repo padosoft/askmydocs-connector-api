@@ -74,8 +74,28 @@ final class PaginationDetectorTest extends TestCase
 
         $this->assertSame('cursor', $config['type']);
         $this->assertSame('meta.next_cursor', $config['next_cursor_path']);
-        $this->assertSame('cursor', $config['cursor_param']);
         $this->assertArrayNotHasKey('next_url_path', $config);
+
+        // No cursor_param, because this route declares no query parameter that
+        // could carry one. It used to emit 'cursor' regardless -- invented from
+        // nothing, and because a deterministic value OVERRIDES the AI's, that
+        // guess replaced a correct suggestion with a parameter the endpoint may
+        // not accept. Saying nothing lets the AI's answer stand.
+        $this->assertArrayNotHasKey('cursor_param', $config);
+    }
+
+    public function test_the_cursor_param_comes_from_the_route_not_from_the_response_key(): void
+    {
+        // What a response CALLS its token and what the endpoint ACCEPTS it
+        // under are routinely different: `next_cursor` out, `after` in.
+        $config = (new PaginationDetector)->detect(
+            $this->route('https://api.example.com/list', ['after', 'limit'], 'items'),
+            ['items' => [], 'meta' => ['next_cursor' => 'abc123']],
+        );
+
+        $this->assertSame('cursor', $config['type']);
+        $this->assertSame('after', $config['cursor_param']);
+        $this->assertSame('meta.next_cursor', $config['next_cursor_path']);
     }
 
     public function test_detects_a_next_url(): void

@@ -24,6 +24,18 @@ final class PaginationDetector
     /** Body keys that read as a "next cursor / next page" token or URL. */
     private const CURSOR_KEYS = ['next_cursor', 'nextcursor', 'next', 'next_page_token', 'nextpagetoken', 'cursor', 'after'];
 
+    /**
+     * Query-param names that read as "send the cursor back here".
+     *
+     * Deliberately separate from {@see CURSOR_KEYS}: what a response CALLS
+     * its token and what the endpoint ACCEPTS it under are routinely
+     * different -- `next_cursor` out, `after` or `page_token` in.
+     */
+    private const CURSOR_PARAM_NAMES = [
+        'cursor', 'after', 'page_token', 'pagetoken', 'next_page_token',
+        'starting_after', 'continuation_token', 'next', 'from',
+    ];
+
     /** Envelope objects a cursor commonly hides under. */
     private const CURSOR_ENVELOPES = ['meta', 'paging', 'pagination', 'page_info', 'pageinfo', 'links', 'cursors'];
 
@@ -69,7 +81,18 @@ final class PaginationDetector
         if ($hit['is_url']) {
             $config['next_url_path'] = $hit['path'];
         } else {
-            $config['cursor_param'] = 'cursor';
+            // Chosen from the parameters the route actually declares, not
+            // hard-coded to `cursor`. The response's key name says nothing
+            // about what the endpoint accepts -- `next_cursor` out and `after`
+            // in is an ordinary pairing -- and because a deterministic value
+            // OVERRIDES the AI's in mergeProducedConfig(), guessing here would
+            // replace a correct suggestion with a parameter the endpoint does
+            // not take. Omitted when the route declares no recognisable
+            // candidate, so the AI's answer survives.
+            $config['cursor_param'] = $this->firstMatch(
+                $this->queryParamNames($route),
+                self::CURSOR_PARAM_NAMES,
+            );
             $config['next_cursor_path'] = $hit['path'];
         }
 

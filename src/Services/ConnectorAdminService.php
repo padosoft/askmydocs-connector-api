@@ -259,16 +259,36 @@ final class ConnectorAdminService
         // Remove relations where this route is either side BEFORE deleting it.
         // The DB FK cascades too, but SQLite only enforces it with PRAGMA
         // foreign_keys ON, so the app-side sweep keeps correctness driver-agnostic.
-        ApiRouteRelation::forTenant($route->tenant_id)
+        $relations = ApiRouteRelation::forTenant($route->tenant_id)
             ->where(function ($q) use ($route): void {
                 $q->where('list_route_id', $route->id)
                     ->orWhere('detail_route_id', $route->id);
             })
+            ->get(['id', 'list_route_id', 'detail_route_id']);
+
+        // The SURVIVING peers, captured before the rows go. Their stored
+        // tool_definition still describes a chain into this route, and
+        // ApiToolRegistry serves that stored copy -- so without a refresh the
+        // model keeps being told it can drill into an endpoint that no longer
+        // exists, until somebody happens to re-test the peer by hand.
+        // deleteRelation() already does this; deleting the ROUTE took a
+        // different path and skipped it.
+        $peerIds = $relations
+            ->flatMap(static fn (ApiRouteRelation $r): array => [$r->list_route_id, $r->detail_route_id])
+            ->reject(static fn (mixed $id): bool => (int) $id === (int) $route->id)
+            ->unique()
+            ->values()
+            ->all();
+
+        ApiRouteRelation::forTenant($route->tenant_id)
+            ->whereIn('id', $relations->pluck('id'))
             ->delete();
 
         if (! $route->delete()) {
             throw new RuntimeException('Failed to delete route.');
         }
+
+        $this->refreshToolDefinitionsByIds($peerIds);
     }
 
     /**
@@ -437,7 +457,11 @@ final class ConnectorAdminService
         $itemsPath = null;
         $pagination = null;
         $itemCount = null;
-        if ($result->isJson) {
+        // A JSON body is not the same thing as a JSON ANSWER. A 401 returning
+        // {"message":"Unauthorized"} decodes perfectly well, and classifying it
+        // would report an endpoint taxonomy and pagination shape derived from
+        // an error envelope -- a confident description of a call that failed.
+        if ($result->ok && $result->isJson) {
             $classification = $this->schemaInferrer->classifyEndpoint($result->body);
             $type = $classification['type']->value;
             $itemsPath = $classification['items_path'];
@@ -489,7 +513,13 @@ final class ConnectorAdminService
 
         // Response producer: sample the endpoint, then AI + deterministic-wins.
         $result = $this->tester->dryRun($transient, $exampleArgs);
-        if (! $result->isJson) {
+
+        // Success is part of the precondition, not just decodability. Without
+        // the `ok` check an authentication failure would be handed to the
+        // analyst as if it were the endpoint's real response, and the operator
+        // would be given a fabricated configuration built from
+        // {"message":"Unauthorized"} rather than told the call did not work.
+        if (! $result->ok || ! $result->isJson) {
             return ['config' => null, 'final_test' => $result, 'source' => 'none'];
         }
 
