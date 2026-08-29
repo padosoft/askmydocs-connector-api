@@ -49,7 +49,10 @@ final class HttpDispatcherMethodCaseTest extends TestCase
             url: 'http://127.0.0.1:8001/healthz',
             query: [],
             headers: [],
-            body: $method === HttpMethod::GET ? null : ['a' => 1],
+            // Mirrors how a plan is really built: the body follows the
+            // method's own predicate, so DELETE stays bodyless like in
+            // production rather than by a rule invented for the test.
+            body: $method->allowsBody() ? ['a' => 1] : null,
         );
 
         (new HttpDispatcher)->send($plan, AuthMaterial::none(), 5000);
