@@ -37,7 +37,16 @@ final class HttpDispatcher
         $headers = array_merge($plan->headers, $material->headers);
         $query = array_merge($plan->query, $material->query);
         $timeoutSeconds = max(1, (int) ceil($timeoutMs / 1000));
-        $method = strtolower($plan->method->value);
+        // Verbatim, and therefore uppercase. HttpMethod already holds the
+        // canonical spelling ('GET'), and Guzzle's PSR-7 Request stores the
+        // method exactly as given -- it does not normalise. Lowercasing it
+        // put `get /path HTTP/1.1` on the wire, which RFC 9110 does not
+        // allow: the method is case-sensitive and the standard ones are
+        // uppercase. Lenient servers accept it; strict ones answer
+        // "Malformed HTTP request" and close the connection without a
+        // response, which reaches the caller as the opaque cURL 52 "Empty
+        // reply from server" rather than as anything pointing back here.
+        $method = $plan->method->value;
 
         $attempt = 0;
         while (true) {
@@ -75,7 +84,6 @@ final class HttpDispatcher
         int $timeoutSeconds,
     ): Response {
         $request = Http::withHeaders($headers)
-            ->withOptions(['allow_redirects' => false])
             ->timeout($timeoutSeconds)
             ->acceptJson();
 
