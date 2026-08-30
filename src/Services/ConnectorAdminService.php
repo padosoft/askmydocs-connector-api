@@ -273,12 +273,17 @@ final class ConnectorAdminService
         // exists, until somebody happens to re-test the peer by hand.
         // deleteRelation() already does this; deleting the ROUTE took a
         // different path and skipped it.
-        $peerIds = $relations
-            ->flatMap(static fn (ApiRouteRelation $r): array => [$r->list_route_id, $r->detail_route_id])
-            ->reject(static fn (mixed $id): bool => (int) $id === (int) $route->id)
-            ->unique()
-            ->values()
-            ->all();
+        // array_values because the Collection chain leaves PHPStan unable to see
+        // that ->values() produced a list, and refreshToolDefinitionsByIds()
+        // asks for one.
+        $peerIds = array_values(array_map(
+            static fn (mixed $id): int => (int) $id,
+            $relations
+                ->flatMap(static fn (ApiRouteRelation $r): array => [$r->list_route_id, $r->detail_route_id])
+                ->reject(static fn (mixed $id): bool => (int) $id === (int) $route->id)
+                ->unique()
+                ->all(),
+        ));
 
         ApiRouteRelation::forTenant($route->tenant_id)
             ->whereIn('id', $relations->pluck('id'))
