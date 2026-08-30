@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Padosoft\AskMyDocsConnectorApi\Tests\Unit;
 
 use Padosoft\AskMyDocsConnectorApi\Support\AuthType;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamLocation;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
@@ -73,5 +74,10 @@ final class EnumsTest extends TestCase
     public function test_route_status_cases(): void
     {
         $this->assertSame(['draft', 'tested', 'active', 'disabled'], RouteStatus::values());
+    }
+
+    public function test_endpoint_type_cases(): void
+    {
+        $this->assertSame(['list', 'detail', 'unknown'], EndpointType::values());
     }
 }

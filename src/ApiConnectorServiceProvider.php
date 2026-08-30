@@ -8,8 +8,11 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorListCommand;
+use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorShowConfigCommand;
 use Padosoft\AskMyDocsConnectorApi\Console\ApiConnectorTestCommand;
+use Padosoft\AskMyDocsConnectorApi\Contracts\NullResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Contracts\NullToolDescriptionAssistant;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
 use Padosoft\AskMyDocsConnectorApi\Contracts\ToolDescriptionAssistant;
 use Padosoft\AskMyDocsConnectorApi\Services\ApiToolExecutor;
 use Padosoft\AskMyDocsConnectorApi\Services\ApiToolRegistry;
@@ -87,6 +90,13 @@ class ApiConnectorServiceProvider extends ServiceProvider
             $this->app->bind(ToolDescriptionAssistant::class, NullToolDescriptionAssistant::class);
         }
 
+        // No-op response analyst by default (workbench "Analisi"); the host
+        // rebinds it to an AI-backed impl. The reduced structure is always shown
+        // regardless — the analyst only adds the optional narration.
+        if (! $this->app->bound(ResponseAnalyst::class)) {
+            $this->app->bind(ResponseAnalyst::class, NullResponseAnalyst::class);
+        }
+
         // RequestPlanner, OutputTransformer, HttpDispatcher, SchemaInferrer,
         // ToolDefinitionGenerator, ApiRouteTester, ApiToolExecutor and
         // ApiToolRegistry are resolved by the container via their typed
@@ -95,8 +105,8 @@ class ApiConnectorServiceProvider extends ServiceProvider
 
     /**
      * Load the admin HTTP routes under the host-configured prefix + middleware
-     * (R32 — the host MUST override the default `api` middleware with its
-     * authenticated admin stack). No-op when `connector-api.routes.enabled` is
+     * (R32 — the package default fails closed, while the host should provide
+     * its authenticated tenant-aware admin stack). No-op when `connector-api.routes.enabled` is
      * false so a deployment can ship the package without the admin surface.
      */
     protected function registerRoutes(): void
@@ -107,7 +117,7 @@ class ApiConnectorServiceProvider extends ServiceProvider
 
         $prefix = (string) config('connector-api.routes.prefix', 'api/admin/api-connectors');
         /** @var array<int,string> $middleware */
-        $middleware = (array) config('connector-api.routes.middleware', ['api']);
+        $middleware = (array) config('connector-api.routes.middleware', ['api', 'auth', 'can:manageConnectors']);
 
         Route::group(['prefix' => $prefix, 'middleware' => $middleware], function (): void {
             $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
@@ -121,6 +131,7 @@ class ApiConnectorServiceProvider extends ServiceProvider
     {
         $this->commands([
             ApiConnectorListCommand::class,
+            ApiConnectorShowConfigCommand::class,
             ApiConnectorTestCommand::class,
         ]);
     }

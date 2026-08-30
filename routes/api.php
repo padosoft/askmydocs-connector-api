@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiAuthProfileController;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiConnectorController;
 use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteController;
+use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteRelationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -27,6 +28,12 @@ use Padosoft\AskMyDocsConnectorApi\Http\Controllers\ApiRouteController;
 */
 
 Route::name('api-connectors.')->group(function (): void {
+    // Playground — ad-hoc live probe of a FREE (no-auth) endpoint. Persists
+    // nothing (no connector/route rows), infers no schema; a read-only
+    // diagnostic. No {route} path param, so it inherits the group's authenticated
+    // admin stack + can:manageConnectors (R32) like every sibling.
+    Route::post('probe', [ApiRouteController::class, 'probe'])->name('probe');
+
     // Connectors
     Route::get('/', [ApiConnectorController::class, 'index'])->name('index');
     Route::post('/', [ApiConnectorController::class, 'store'])->name('store');
@@ -48,6 +55,13 @@ Route::name('api-connectors.')->group(function (): void {
     // Routes (Rotte)
     Route::post('{connector}/routes', [ApiRouteController::class, 'store'])
         ->whereNumber('connector')->name('routes.store');
+    // Config JSON pivot — dry-run ("Testa") + AI producer ("Configura con AI") on
+    // an UNSAVED config, so the modal works in create mode (no {route} yet). Both
+    // inherit the group's admin stack + can:manageConnectors (R32) like siblings.
+    Route::post('{connector}/routes/test-config', [ApiRouteController::class, 'testConfig'])
+        ->whereNumber('connector')->name('routes.test-config');
+    Route::post('{connector}/routes/produce-config', [ApiRouteController::class, 'produceConfig'])
+        ->whereNumber('connector')->name('routes.produce-config');
     Route::get('routes/{route}', [ApiRouteController::class, 'show'])
         ->whereNumber('route')->name('routes.show');
     Route::patch('routes/{route}', [ApiRouteController::class, 'update'])
@@ -64,4 +78,18 @@ Route::name('api-connectors.')->group(function (): void {
         ->whereNumber('route')->name('routes.disable');
     Route::post('routes/{route}/try', [ApiRouteController::class, 'tryTool'])
         ->whereNumber('route')->name('routes.try');
+
+    // Relations (List → Detail) — spec Obj 3
+    Route::get('{connector}/relations', [ApiRouteRelationController::class, 'index'])
+        ->whereNumber('connector')->name('relations.index');
+    Route::post('{connector}/relations', [ApiRouteRelationController::class, 'store'])
+        ->whereNumber('connector')->name('relations.store');
+    Route::get('relations/{relation}', [ApiRouteRelationController::class, 'show'])
+        ->whereNumber('relation')->name('relations.show');
+    Route::patch('relations/{relation}', [ApiRouteRelationController::class, 'update'])
+        ->whereNumber('relation')->name('relations.update');
+    Route::delete('relations/{relation}', [ApiRouteRelationController::class, 'destroy'])
+        ->whereNumber('relation')->name('relations.destroy');
+    Route::post('relations/{relation}/drill', [ApiRouteRelationController::class, 'drill'])
+        ->whereNumber('relation')->name('relations.drill');
 });

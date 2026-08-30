@@ -6,7 +6,9 @@ namespace Padosoft\AskMyDocsConnectorApi\Tests\Feature;
 
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
 use Padosoft\AskMyDocsConnectorApi\Tests\TestCase;
@@ -40,6 +42,19 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->assertSame('acme', $connector->tenant_id);
         $this->assertSame('proj-a', $connector->project_key);
         $this->assertDatabaseHas('api_connectors', ['name' => 'C1', 'tenant_id' => 'acme']);
+    }
+
+    public function test_update_route_persists_the_pagination_config(): void
+    {
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List', 'http_method' => 'GET',
+            'url' => 'https://api.example.com/list', 'mode' => 'tool', 'parameters' => [],
+        ]);
+
+        $this->service->updateRoute($route, ['pagination' => ['type' => 'page', 'page_param' => 'page']]);
+
+        $this->assertSame(['type' => 'page', 'page_param' => 'page'], $route->fresh()->pagination);
     }
 
     public function test_find_connector_is_tenant_scoped(): void
@@ -126,5 +141,57 @@ final class ConnectorAdminServiceTest extends TestCase
         $this->service->deleteConnector($connector);
 
         $this->assertDatabaseMissing('api_connectors', ['id' => $connector->id]);
+    }
+
+    public function test_test_route_auto_detects_the_endpoint_taxonomy(): void
+    {
+        Http::fake([
+            'api.example.com/*' => Http::response(['data' => [['id' => 1], ['id' => 2]]], 200),
+        ]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'List users',
+            'http_method' => 'GET',
+            'url' => 'https://api.example.com/users',
+            'mode' => 'tool',
+            'parameters' => [],
+        ]);
+
+        $tested = $this->service->testRoute($route, [])['route'];
+
+        $this->assertSame(RouteStatus::Tested, $tested->status);
+        $this->assertSame(EndpointType::List, $tested->endpoint_type);
+        $this->assertSame('data', $tested->items_path);
+        $this->assertFalse($tested->endpoint_type_locked);
+        $this->assertDatabaseHas('api_routes', [
+            'id' => $route->id,
+            'endpoint_type' => 'list',
+            'items_path' => 'data',
+        ]);
+    }
+
+    public function test_test_route_preserves_a_locked_operator_override(): void
+    {
+        // Operator forced 'detail' up front; the live response is a list, but the
+        // detector must NOT clobber the locked choice.
+        Http::fake([
+            'api.example.com/*' => Http::response([['id' => 1], ['id' => 2]], 200),
+        ]);
+        $connector = $this->service->createConnector(['name' => 'C1']);
+        $route = $this->service->createRoute($connector, [
+            'name' => 'Odd one',
+            'http_method' => 'GET',
+            'url' => 'https://api.example.com/thing',
+            'mode' => 'tool',
+            'endpoint_type' => 'detail',
+            'parameters' => [],
+        ]);
+        $this->assertTrue($route->endpoint_type_locked);
+        $this->assertSame(EndpointType::Detail, $route->endpoint_type);
+
+        $tested = $this->service->testRoute($route, [])['route'];
+
+        $this->assertSame(EndpointType::Detail, $tested->endpoint_type);
+        $this->assertTrue($tested->endpoint_type_locked);
     }
 }

@@ -6,12 +6,19 @@ namespace Padosoft\AskMyDocsConnectorApi\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProbeRequest;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\ProduceConfigRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\StoreRouteRequest;
+use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestConfigRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TestRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\TryRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Requests\UpdateRouteRequest;
 use Padosoft\AskMyDocsConnectorApi\Http\Resources\ApiRouteResource;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Services\ConnectorAdminService;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfig;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfigSchema;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use RuntimeException;
 
@@ -34,7 +41,7 @@ final class ApiRouteController extends Controller
         $connectorModel = $this->service->findConnector($connector);
 
         try {
-            $route = $this->service->createRoute($connectorModel, $request->validated());
+            $route = $this->service->createRoute($connectorModel, $this->routeData($request->validated()));
         } catch (RuntimeException $e) {
             return $this->failure($e);
         }
@@ -55,12 +62,81 @@ final class ApiRouteController extends Controller
         $model = $this->service->findRoute($route);
 
         try {
-            $updated = $this->service->updateRoute($model, $request->validated());
+            $updated = $this->service->updateRoute($model, $this->routeData($request->validated()));
         } catch (RuntimeException $e) {
             return $this->failure($e);
         }
 
         return (new ApiRouteResource($updated))->response();
+    }
+
+    /**
+     * Un-group a `{config}` envelope (the FE's canonical config JSON) into the
+     * flat create/update payload via the codec; otherwise pass the flat
+     * validated fields straight through (back-compat: CLI / legacy callers).
+     *
+     * @param  array<string,mixed>  $validated
+     * @return array<string,mixed>
+     */
+    private function routeData(array $validated): array
+    {
+        if (isset($validated['config']) && is_array($validated['config'])) {
+            return RouteConfig::applyToRoute(RouteConfigSchema::sanitize($validated['config']) ?? $validated['config']);
+        }
+
+        return $validated;
+    }
+
+    /**
+     * "Testa" — dry-run a (possibly unsaved) config against its endpoint and
+     * classify the live response. Works in create mode: no persisted route. A
+     * failed/non-JSON call is a valid outcome (HTTP 200, ok:false, R14).
+     */
+    public function testConfig(TestConfigRequest $request, int $connector): JsonResponse
+    {
+        $connectorModel = $this->service->findConnector($connector);
+        $out = $this->service->testConfig($connectorModel, $request->config(), $request->exampleArgs());
+        /** @var TestResult $result */
+        $result = $out['test'];
+
+        return response()->json([
+            'test' => $this->testPayload($result),
+            'endpoint_type' => $out['endpoint_type'],
+            'items_path' => $out['items_path'],
+            'detected_pagination' => $out['detected_pagination'],
+            'item_count' => $out['item_count'],
+        ]);
+    }
+
+    /**
+     * "Configura con AI" — the single AI pass over the config JSON. Returns the
+     * produced config + its final dry-run ("test finale") + the source (openapi /
+     * response / none). Does NOT persist; the operator reviews + saves. An
+     * OpenAPI fetch/parse/SSRF failure surfaces as 422 (R14).
+     */
+    public function produceConfig(ProduceConfigRequest $request, int $connector): JsonResponse
+    {
+        $connectorModel = $this->service->findConnector($connector);
+
+        try {
+            $out = $this->service->produceConfig(
+                $connectorModel,
+                $request->config(),
+                $request->exampleArgs(),
+                $request->openApiUrl(),
+            );
+        } catch (RuntimeException $e) {
+            return $this->failure($e);
+        }
+
+        /** @var TestResult $final */
+        $final = $out['final_test'];
+
+        return response()->json([
+            'config' => $out['config'],
+            'final_test' => $this->testPayload($final),
+            'source' => $out['source'],
+        ]);
     }
 
     public function destroy(int $route): JsonResponse
@@ -69,6 +145,26 @@ final class ApiRouteController extends Controller
         $this->service->deleteRoute($model);
 
         return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Ad-hoc "playground" probe — fire a FREE, unauthenticated, NON-persisted
+     * live call ({method, url, headers, query, body}) and return the classified
+     * outcome. Like {@see test()} a failed/non-JSON call is a valid display
+     * outcome (HTTP 200, ok:false, R14); only a malformed request 422s. No route
+     * or connector is created.
+     */
+    public function probe(ProbeRequest $request): JsonResponse
+    {
+        $result = $this->service->probe(
+            $request->httpMethod(),
+            $request->targetUrl(),
+            $request->headerMap(),
+            $request->queryParams(),
+            $request->jsonBody(),
+        );
+
+        return response()->json($this->probePayload($result));
     }
 
     public function test(TestRouteRequest $request, int $route): JsonResponse
@@ -86,7 +182,43 @@ final class ApiRouteController extends Controller
             'tool_definition' => $tested->tool_definition,
             'input_schema' => $tested->input_schema,
             'output_schema' => $tested->output_schema,
+            'endpoint_type' => $tested->endpoint_type->value,
+            'items_path' => $tested->items_path,
+            'item_schema' => $this->itemSchema($tested),
         ]);
+    }
+
+    /**
+     * The JSON schema of a single LIST item, extracted from the inferred
+     * output_schema at `items_path` — the shape the relation field-picker maps
+     * from. Null for non-list routes or when the schema can't be walked.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function itemSchema(ApiRoute $route): ?array
+    {
+        if ($route->endpoint_type !== EndpointType::List) {
+            return null;
+        }
+
+        $node = $route->output_schema;
+        if (! is_array($node)) {
+            return null;
+        }
+
+        // Walk the envelope dot-path (e.g. 'data' or 'result.orders'); '' or null
+        // means the whole body IS the item array (top-level list).
+        $path = (string) ($route->items_path ?? '');
+        if ($path !== '') {
+            foreach (explode('.', $path) as $segment) {
+                $node = $node['properties'][$segment] ?? null;
+                if (! is_array($node)) {
+                    return null;
+                }
+            }
+        }
+
+        return is_array($node['items'] ?? null) ? $node['items'] : null;
     }
 
     public function regenerateDescription(int $route): JsonResponse
@@ -129,6 +261,15 @@ final class ApiRouteController extends Controller
         $result = $this->service->tryRoute($model, $request->arguments());
 
         return response()->json(['result' => $result]);
+    }
+
+    /**
+    /**
+     * @return array<string,mixed>
+     */
+    private function probePayload(TestResult $result): array
+    {
+        return $this->testPayload($result) + ['duration_ms' => $result->durationMs];
     }
 
     /**

@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
@@ -33,8 +34,12 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property array<string,mixed>|null $param_mapping
  * @property array<string,mixed>|null $tool_definition
  * @property array<string,mixed>|null $output_transform
+ * @property array<string,mixed>|null $pagination
  * @property RouteMode $mode
  * @property RouteStatus $status
+ * @property EndpointType $endpoint_type
+ * @property bool $endpoint_type_locked
+ * @property string|null $items_path
  * @property int|null $timeout_ms
  * @property int|null $cache_ttl_s
  * @property int|null $rate_limit
@@ -46,6 +51,8 @@ use Padosoft\AskMyDocsConnectorBase\Models\Concerns\BelongsToTenant;
  * @property-read ApiConnector|null $connector
  * @property-read Collection<int,ApiRouteParameter> $parameters
  * @property-read Collection<int,ApiToolCallLog> $callLogs
+ * @property-read Collection<int,ApiRouteRelation> $listRelations
+ * @property-read Collection<int,ApiRouteRelation> $detailRelations
  *
  * @method static \Illuminate\Database\Eloquent\Builder<static> forTenant(string $tenantId)
  * @method static \Illuminate\Database\Eloquent\Builder<static> exposesTool()
@@ -71,8 +78,12 @@ class ApiRoute extends Model
         'param_mapping',
         'tool_definition',
         'output_transform',
+        'pagination',
         'mode',
         'status',
+        'endpoint_type',
+        'endpoint_type_locked',
+        'items_path',
         'timeout_ms',
         'cache_ttl_s',
         'rate_limit',
@@ -86,11 +97,15 @@ class ApiRoute extends Model
         'http_method' => HttpMethod::class,
         'mode' => RouteMode::class,
         'status' => RouteStatus::class,
+        'endpoint_type' => EndpointType::class,
+        'endpoint_type_locked' => 'boolean',
+        'items_path' => 'string',
         'input_schema' => 'array',
         'output_schema' => 'array',
         'param_mapping' => 'array',
         'tool_definition' => 'array',
         'output_transform' => 'array',
+        'pagination' => 'array',
         'last_test_payload' => 'array',
         'last_test_at' => 'datetime',
         'auth_profile_id' => 'integer',
@@ -121,6 +136,26 @@ class ApiRoute extends Model
     }
 
     /**
+     * Relations where THIS route is the list side (drill-downs it offers).
+     *
+     * @return HasMany<ApiRouteRelation, $this>
+     */
+    public function listRelations(): HasMany
+    {
+        return $this->hasMany(ApiRouteRelation::class, 'list_route_id');
+    }
+
+    /**
+     * Relations where THIS route is the detail side (lists that feed it).
+     *
+     * @return HasMany<ApiRouteRelation, $this>
+     */
+    public function detailRelations(): HasMany
+    {
+        return $this->hasMany(ApiRouteRelation::class, 'detail_route_id');
+    }
+
+    /**
      * Routes that contribute a live tool to the chat loop: active + tool/both.
      *
      * @param  Builder<ApiRoute>  $query
@@ -148,5 +183,17 @@ class ApiRoute extends Model
         }
 
         return $this->connector?->defaultAuthProfile();
+    }
+
+    /** Whether this route returns a collection (drillable into a detail). */
+    public function isList(): bool
+    {
+        return $this->endpoint_type === EndpointType::List;
+    }
+
+    /** Whether this route returns a single resource object. */
+    public function isDetail(): bool
+    {
+        return $this->endpoint_type === EndpointType::Detail;
     }
 }

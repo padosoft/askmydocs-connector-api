@@ -43,13 +43,24 @@ final class ApiConnectorListCommand extends Command
             $rows = $connector->routes->map(static fn ($route): array => [
                 $route->slug,
                 $route->http_method->value,
+                $route->endpoint_type->value,
                 $route->status->value,
                 $route->mode->value,
                 $route->last_test_status ?? '—',
             ])->all();
 
             if ($rows !== []) {
-                $this->table(['slug', 'method', 'status', 'mode', 'last_test'], $rows);
+                $this->table(['slug', 'method', 'type', 'status', 'mode', 'last_test'], $rows);
+            }
+
+            foreach ($connector->relations as $relation) {
+                $this->line(sprintf(
+                    '  ↳ %s → %s (%d field map%s)',
+                    $relation->listRoute->slug,
+                    $relation->detailRoute->slug,
+                    count($relation->field_map),
+                    count($relation->field_map) === 1 ? '' : 's',
+                ));
             }
         }
 

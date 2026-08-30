@@ -63,7 +63,9 @@ final class OAuth2ClientCredentialsAuth implements AuthApplier
         }
 
         $style = strtolower((string) ($config['auth_style'] ?? 'body'));
-        $request = Http::asForm()->timeout(15);
+        $request = Http::asForm()
+            ->withOptions(['allow_redirects' => false])
+            ->timeout(15);
         if ($style === 'basic') {
             $request = $request->withBasicAuth($clientId, $clientSecret);
         } else {

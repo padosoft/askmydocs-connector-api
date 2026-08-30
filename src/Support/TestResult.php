@@ -13,6 +13,7 @@ final class TestResult
     /**
      * @param  array<string,mixed>  $headers
      * @param  mixed  $body  decoded JSON when $isJson, else raw string
+     * @param  int|null  $durationMs  wall-clock of the outbound call in ms (null when it never left)
      */
     public function __construct(
         public readonly bool $ok,
@@ -21,11 +22,20 @@ final class TestResult
         public readonly mixed $body,
         public readonly bool $isJson,
         public readonly ?string $error = null,
+        public readonly ?int $durationMs = null,
     ) {}
 
-    public static function networkError(string $message): self
+    public static function networkError(string $message, ?int $durationMs = null): self
     {
-        return new self(ok: false, status: null, headers: [], body: null, isJson: false, error: $message);
+        return new self(
+            ok: false,
+            status: null,
+            headers: [],
+            body: null,
+            isJson: false,
+            error: $message,
+            durationMs: $durationMs,
+        );
     }
 
     /** Short machine label persisted to api_routes.last_test_status. */

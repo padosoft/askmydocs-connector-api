@@ -84,6 +84,7 @@ final class HttpDispatcher
         int $timeoutSeconds,
     ): Response {
         $request = Http::withHeaders($headers)
+            ->withOptions(['allow_redirects' => false])
             ->timeout($timeoutSeconds)
             ->acceptJson();
 

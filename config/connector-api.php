@@ -91,13 +91,13 @@ return [
     | Admin HTTP routes
     |--------------------------------------------------------------------------
     | The package ships admin routes under this prefix. The HOST application
-    | MUST override `middleware` with its authenticated admin stack
-    | (auth:sanctum + tenant scoping + an RBAC gate) — R32. The default `api`
-    | middleware leaves them UNAUTHENTICATED and is for standalone dev only.
+    | SHOULD override `middleware` with its authenticated admin stack
+    | (auth:sanctum + tenant scoping + an RBAC gate) — R32. The package default
+    | fails closed behind authentication and the manageConnectors ability.
     */
     'routes' => [
         'enabled' => (bool) env('API_CONNECTOR_ROUTES_ENABLED', true),
         'prefix' => env('API_CONNECTOR_ROUTES_PREFIX', 'api/admin/api-connectors'),
-        'middleware' => ['api'],
+        'middleware' => ['api', 'auth', 'can:manageConnectors'],
     ],
 ];

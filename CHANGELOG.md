@@ -26,6 +26,12 @@ customer's APIs.
   `SchemaInferrer` deduces the input/output schema, and
   `ToolDefinitionGenerator` (optionally assisted by the host-bound
   `ToolDescriptionAssistant`) produces the tool definition exposed to the LLM.
+- **Ad-hoc endpoint probe.** `POST /probe` fires a FREE, unauthenticated,
+  NON-persisted live call (`{http_method, url, headers, query, body}`) and
+  returns the classified `TestResult` + `duration_ms` — a read-only playground
+  behind the free-endpoint modal. It reuses the same execution + response
+  classification stack as `test()` (UrlGuard SSRF → dispatch → JSON classify)
+  but writes no connector/route rows and infers no schema.
 - **Runtime executor.** `ApiToolExecutor` resolves the binding, applies auth +
   fixed params, runs the HTTP call with per-Rotta timeout / retry-on-transient
   (never on 4xx) / backoff / cache TTL, transforms and byte-caps the output,

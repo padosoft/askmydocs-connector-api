@@ -74,6 +74,51 @@ final class ToolDefinitionGeneratorTest extends TestCase
         $this->assertStringContainsString('Calls GET /v1/orders', $definition['description']);
     }
 
+    public function test_generate_annotates_a_detail_param_and_description_from_inbound_relations(): void
+    {
+        $route = $this->route(slug: 'user_detail', name: 'User detail', description: 'Fetch a user.');
+        $inputSchema = ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']];
+
+        $definition = $this->generator->generate($route, $inputSchema, null, [
+            'inbound' => [
+                ['list_slug' => 'list_users', 'field_map' => [['from' => 'id', 'to_param' => 'id']]],
+            ],
+        ]);
+
+        // The `id` param learns where its value comes from…
+        $this->assertStringContainsString(
+            'Typically the `id` field of an item returned by the `list_users` tool.',
+            $definition['input_schema']['properties']['id']['description'],
+        );
+        // …and the tool description tells the model to call the list first.
+        $this->assertStringContainsString('Call the `list_users` tool first', $definition['description']);
+    }
+
+    public function test_generate_advertises_drill_downs_from_outbound_relations(): void
+    {
+        $route = $this->route(slug: 'list_users', name: 'List users', description: 'List users.');
+
+        $definition = $this->generator->generate($route, ['type' => 'object', 'properties' => [], 'required' => []], null, [
+            'outbound' => [['detail_slug' => 'user_detail']],
+        ]);
+
+        $this->assertStringContainsString(
+            'Each returned item can be drilled into with the `user_detail` tool.',
+            $definition['description'],
+        );
+    }
+
+    public function test_generate_leaves_the_definition_unchanged_without_relations(): void
+    {
+        $route = $this->route(slug: 'user_detail', name: 'User detail', description: 'Fetch a user.');
+        $inputSchema = ['type' => 'object', 'properties' => ['id' => ['type' => 'integer']], 'required' => ['id']];
+
+        $definition = $this->generator->generate($route, $inputSchema);
+
+        $this->assertSame('Fetch a user.', $definition['description']);
+        $this->assertSame(['type' => 'integer'], $definition['input_schema']['properties']['id']);
+    }
+
     private function route(string $slug, string $name, ?string $description): ApiRoute
     {
         $route = new ApiRoute;

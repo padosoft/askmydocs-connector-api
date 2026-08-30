@@ -6,6 +6,7 @@ namespace Padosoft\AskMyDocsConnectorApi\Tests\Unit;
 
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
 use Padosoft\AskMyDocsConnectorApi\Services\SchemaInferrer;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamLocation;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
@@ -83,6 +84,87 @@ final class SchemaInferrerTest extends TestCase
         $this->assertSame('array', $schema['type']);
         $this->assertSame('object', $schema['items']['type']);
         $this->assertSame('integer', $schema['items']['properties']['id']['type']);
+    }
+
+    public function test_classify_top_level_array_of_objects_is_a_list(): void
+    {
+        $c = $this->inferrer->classifyEndpoint([['id' => 1], ['id' => 2]]);
+
+        $this->assertSame(EndpointType::List, $c['type']);
+        $this->assertSame('', $c['items_path']);
+    }
+
+    public function test_classify_top_level_array_of_scalars_is_a_list_but_still_top_level(): void
+    {
+        // A top-level array IS the collection even if items are scalars
+        // (not drillable, but still a list).
+        $c = $this->inferrer->classifyEndpoint(['a', 'b', 'c']);
+
+        $this->assertSame(EndpointType::List, $c['type']);
+        $this->assertSame('', $c['items_path']);
+    }
+
+    public function test_classify_envelope_key_holding_an_array_is_a_list(): void
+    {
+        $c = $this->inferrer->classifyEndpoint([
+            'data' => [['id' => 1], ['id' => 2]],
+            'meta' => ['total' => 2],
+        ]);
+
+        $this->assertSame(EndpointType::List, $c['type']);
+        $this->assertSame('data', $c['items_path']);
+    }
+
+    public function test_classify_empty_envelope_array_is_still_a_list(): void
+    {
+        $c = $this->inferrer->classifyEndpoint(['results' => []]);
+
+        $this->assertSame(EndpointType::List, $c['type']);
+        $this->assertSame('results', $c['items_path']);
+    }
+
+    public function test_classify_wrapped_single_resource_is_a_detail(): void
+    {
+        // `{data:{…}}` — data is an OBJECT, not an array — is a detail wrapper.
+        $c = $this->inferrer->classifyEndpoint(['data' => ['id' => 1, 'name' => 'Ada']]);
+
+        $this->assertSame(EndpointType::Detail, $c['type']);
+        $this->assertNull($c['items_path']);
+    }
+
+    public function test_classify_single_object_is_a_detail(): void
+    {
+        $c = $this->inferrer->classifyEndpoint(['id' => 1, 'name' => 'Ada', 'tags' => ['x', 'y']]);
+
+        // `tags` is an array of scalars — a field, not a collection.
+        $this->assertSame(EndpointType::Detail, $c['type']);
+        $this->assertNull($c['items_path']);
+    }
+
+    public function test_classify_single_non_conventional_object_list_property_is_a_list(): void
+    {
+        $c = $this->inferrer->classifyEndpoint(['orders' => [['id' => 1]]]);
+
+        $this->assertSame(EndpointType::List, $c['type']);
+        $this->assertSame('orders', $c['items_path']);
+    }
+
+    public function test_classify_multiple_ambiguous_object_lists_is_unknown(): void
+    {
+        $c = $this->inferrer->classifyEndpoint([
+            'orders' => [['id' => 1]],
+            'invoices' => [['id' => 9]],
+        ]);
+
+        $this->assertSame(EndpointType::Unknown, $c['type']);
+        $this->assertNull($c['items_path']);
+    }
+
+    public function test_classify_non_array_body_is_unknown(): void
+    {
+        $this->assertSame(EndpointType::Unknown, $this->inferrer->classifyEndpoint('plain text')['type']);
+        $this->assertSame(EndpointType::Unknown, $this->inferrer->classifyEndpoint(42)['type']);
+        $this->assertNull($this->inferrer->classifyEndpoint(null)['items_path']);
     }
 
     private function param(

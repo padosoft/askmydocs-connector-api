@@ -7,13 +7,26 @@ namespace Padosoft\AskMyDocsConnectorApi\Services;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Padosoft\AskMyDocsConnectorApi\Contracts\ResponseAnalyst;
+use Padosoft\AskMyDocsConnectorApi\Exceptions\ApiConnectorException;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiAuthProfile;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiConnector;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteParameter;
+use Padosoft\AskMyDocsConnectorApi\Models\ApiRouteRelation;
+use Padosoft\AskMyDocsConnectorApi\Support\EndpointType;
+use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
+use Padosoft\AskMyDocsConnectorApi\Support\OpenApiImporter;
+use Padosoft\AskMyDocsConnectorApi\Support\PaginationDetector;
+use Padosoft\AskMyDocsConnectorApi\Support\ParamLocation;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamSource;
 use Padosoft\AskMyDocsConnectorApi\Support\ParamType;
+use Padosoft\AskMyDocsConnectorApi\Support\RelationMapper;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfig;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteConfigSchema;
+use Padosoft\AskMyDocsConnectorApi\Support\RouteMode;
 use Padosoft\AskMyDocsConnectorApi\Support\RouteStatus;
+use Padosoft\AskMyDocsConnectorApi\Support\StructureReducer;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use Padosoft\AskMyDocsConnectorBase\Support\TenantContext;
 use RuntimeException;
@@ -35,6 +48,11 @@ final class ConnectorAdminService
         private readonly SchemaInferrer $schemaInferrer,
         private readonly ToolDefinitionGenerator $toolGenerator,
         private readonly ApiToolExecutor $executor,
+        private readonly RelationMapper $relationMapper,
+        private readonly StructureReducer $structureReducer,
+        private readonly ResponseAnalyst $analyst,
+        private readonly PaginationDetector $paginationDetector,
+        private readonly OpenApiImporter $openApiImporter,
     ) {}
 
     /* ----------------------------------------------------------------------
@@ -59,6 +77,12 @@ final class ConnectorAdminService
             ->findOrFail($id);
     }
 
+    public function findRelation(int $id): ApiRouteRelation
+    {
+        return ApiRouteRelation::forTenant($this->currentTenant())
+            ->findOrFail($id);
+    }
+
     /* ----------------------------------------------------------------------
      | Connectors
      * -------------------------------------------------------------------- */
@@ -68,7 +92,16 @@ final class ConnectorAdminService
      */
     public function listConnectors(): Collection
     {
-        $query = ApiConnector::forTenant($this->currentTenant())->with('routes');
+        // The relation route stubs render {id, name, slug, endpoint_type}; the
+        // partial select MUST carry every column the stub reads (id for the FK
+        // match + name + slug + endpoint_type), else the resource dereferences a
+        // null enum. Keep in lockstep with ApiRouteRelationResource::routeStub().
+        $query = ApiConnector::forTenant($this->currentTenant())
+            ->with([
+                'routes',
+                'relations.listRoute:id,name,slug,endpoint_type',
+                'relations.detailRoute:id,name,slug,endpoint_type',
+            ]);
         $query->orderBy('name');
 
         return $query->get();
@@ -223,9 +256,65 @@ final class ConnectorAdminService
 
     public function deleteRoute(ApiRoute $route): void
     {
+        // Remove relations where this route is either side BEFORE deleting it.
+        // The DB FK cascades too, but SQLite only enforces it with PRAGMA
+        // foreign_keys ON, so the app-side sweep keeps correctness driver-agnostic.
+        $relations = ApiRouteRelation::forTenant($route->tenant_id)
+            ->where(function ($q) use ($route): void {
+                $q->where('list_route_id', $route->id)
+                    ->orWhere('detail_route_id', $route->id);
+            })
+            ->get(['id', 'list_route_id', 'detail_route_id']);
+
+        // The SURVIVING peers, captured before the rows go. Their stored
+        // tool_definition still describes a chain into this route, and
+        // ApiToolRegistry serves that stored copy -- so without a refresh the
+        // model keeps being told it can drill into an endpoint that no longer
+        // exists, until somebody happens to re-test the peer by hand.
+        // deleteRelation() already does this; deleting the ROUTE took a
+        // different path and skipped it.
+        // array_values because the Collection chain leaves PHPStan unable to see
+        // that ->values() produced a list, and refreshToolDefinitionsByIds()
+        // asks for one.
+        $peerIds = array_values(array_map(
+            static fn (mixed $id): int => (int) $id,
+            $relations
+                ->flatMap(static fn (ApiRouteRelation $r): array => [$r->list_route_id, $r->detail_route_id])
+                ->reject(static fn (mixed $id): bool => (int) $id === (int) $route->id)
+                ->unique()
+                ->all(),
+        ));
+
+        ApiRouteRelation::forTenant($route->tenant_id)
+            ->whereIn('id', $relations->pluck('id'))
+            ->delete();
+
         if (! $route->delete()) {
             throw new RuntimeException('Failed to delete route.');
         }
+
+        $this->refreshToolDefinitionsByIds($peerIds);
+    }
+
+    /**
+     * Ad-hoc "playground" probe — fire a raw, unauthenticated, NON-persisted live
+     * call and return the classified {@see TestResult}. No connector/route rows
+     * are written and no schema/tool is inferred: a read-only diagnostic behind
+     * `can:manageConnectors`. Tenant scoping (R30) is not applicable (nothing is
+     * stored); the surface stays admin-gated at the route/middleware level.
+     *
+     * @param  array<string,string>  $headers
+     * @param  array<string,mixed>  $query
+     * @param  array<string,mixed>|null  $body
+     */
+    public function probe(
+        HttpMethod $method,
+        string $url,
+        array $headers = [],
+        array $query = [],
+        ?array $body = null,
+    ): TestResult {
+        return $this->tester->probe($method, $url, $headers, $query, $body);
     }
 
     /**
@@ -250,7 +339,12 @@ final class ConnectorAdminService
 
         $inputSchema = $this->schemaInferrer->inferInput($route->parameters);
         $outputSchema = $this->schemaInferrer->inferOutput($result->body);
-        $definition = $this->toolGenerator->generate($route, $inputSchema, $result->body);
+        $definition = $this->toolGenerator->generate(
+            $route,
+            $inputSchema,
+            $result->body,
+            $this->relationContextFor($route),
+        );
 
         $slugUnset = $route->slug === '' || $route->slug === $this->toolGenerator->normalizeSlug($route->name);
 
@@ -260,6 +354,16 @@ final class ConnectorAdminService
         if ($slugUnset) {
             $route->slug = $definition['name'];
         }
+
+        // Auto-detect the endpoint taxonomy (Lista vs Dettaglio) from the live
+        // response — UNLESS the operator locked an explicit override, in which
+        // case their choice (and any manual items_path) is preserved.
+        if (! $route->endpoint_type_locked) {
+            $classification = $this->schemaInferrer->classifyEndpoint($result->body);
+            $route->endpoint_type = $classification['type'];
+            $route->items_path = $classification['items_path'];
+        }
+
         $route->status = RouteStatus::Tested;
         $this->persist($route);
 
@@ -283,7 +387,12 @@ final class ConnectorAdminService
             throw new RuntimeException('Test the route before generating its description.', 422);
         }
 
-        $definition = $this->toolGenerator->generate($route, $inputSchema, $route->last_test_payload);
+        $definition = $this->toolGenerator->generate(
+            $route,
+            $inputSchema,
+            $route->last_test_payload,
+            $this->relationContextFor($route),
+        );
         $route->tool_definition = $definition;
         $this->persist($route);
 
@@ -325,6 +434,425 @@ final class ConnectorAdminService
         $route->loadMissing('parameters');
 
         return $this->executor->execute($route, $arguments, []);
+    }
+
+    /* ----------------------------------------------------------------------
+     | Config JSON (canonical) — the AI-produced pivot for a route
+     * -------------------------------------------------------------------- */
+
+    /**
+     * Dry-run a config JSON that has NOT been persisted yet (the modal's "Testa"
+     * — works in create mode too), and classify the live response.
+     *
+     * Builds a transient (unsaved) route from the config, fires the real call
+     * (SSRF/planner/auth all apply), and — on a JSON body — reports the
+     * deterministically classified endpoint_type/items_path + detected
+     * pagination so the modal can offer them without a second round-trip.
+     *
+     * @param  array<string,mixed>  $config  a (grouped) config JSON
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{test: TestResult, endpoint_type: string, items_path: ?string, detected_pagination: ?array<string,mixed>, item_count: ?int}
+     */
+    public function testConfig(ApiConnector $connector, array $config, array $exampleArgs = []): array
+    {
+        $route = $this->transientRouteFromConfig($connector, RouteConfigSchema::sanitize($config) ?? $config);
+        $result = $this->tester->dryRun($route, $exampleArgs);
+
+        $type = 'unknown';
+        $itemsPath = null;
+        $pagination = null;
+        $itemCount = null;
+        // A JSON body is not the same thing as a JSON ANSWER. A 401 returning
+        // {"message":"Unauthorized"} decodes perfectly well, and classifying it
+        // would report an endpoint taxonomy and pagination shape derived from
+        // an error envelope -- a confident description of a call that failed.
+        if ($result->ok && $result->isJson) {
+            $classification = $this->schemaInferrer->classifyEndpoint($result->body);
+            $type = $classification['type']->value;
+            $itemsPath = $classification['items_path'];
+            $pagination = $this->paginationDetector->detect($route, $result->body);
+            $itemCount = count($this->relationMapper->itemsAt($result->body, is_string($itemsPath) ? $itemsPath : ''));
+        }
+
+        return [
+            'test' => $result,
+            'endpoint_type' => $type,
+            'items_path' => $itemsPath,
+            'detected_pagination' => $pagination,
+            'item_count' => $itemCount,
+        ];
+    }
+
+    /**
+     * "Configura con AI" over the canonical config JSON — the single AI pass.
+     *
+     * Prefer an OpenAPI contract when a spec URL is given (authoritative, no live
+     * call needed); otherwise dry-run the current config, hand the reduced sample
+     * + the target schema + a deterministic seed to {@see ResponseAnalyst::produceConfig()},
+     * then let the deterministic classifier/detector WIN on the structural fields.
+     * Returns the produced config JSON + a final dry-run of it (the "test finale")
+     * — it does NOT persist; the operator reviews the filled form and saves.
+     *
+     * @param  array<string,mixed>  $config  the current (grouped) config JSON
+     * @param  array<string,mixed>  $exampleArgs
+     * @return array{config: array<string,mixed>|null, final_test: TestResult, source: string}
+     */
+    public function produceConfig(ApiConnector $connector, array $config, array $exampleArgs = [], ?string $openApiUrl = null): array
+    {
+        $input = RouteConfigSchema::sanitize($config) ?? $config;
+        $transient = $this->transientRouteFromConfig($connector, $input);
+
+        // OpenAPI producer: authoritative, works behind auth, no live call.
+        if (is_string($openApiUrl) && $openApiUrl !== '') {
+            $suggestion = $this->openApiImporter->configForRoute($openApiUrl, $transient);
+            if ($suggestion !== null) {
+                $produced = RouteConfigSchema::sanitize($this->suggestionToConfig($suggestion, $input));
+
+                return [
+                    'config' => $produced,
+                    'final_test' => $this->dryRunProducedConfig($connector, $produced ?? $input, $exampleArgs),
+                    'source' => 'openapi',
+                ];
+            }
+        }
+
+        // Response producer: sample the endpoint, then AI + deterministic-wins.
+        $result = $this->tester->dryRun($transient, $exampleArgs);
+
+        // Success is part of the precondition, not just decodability. Without
+        // the `ok` check an authentication failure would be handed to the
+        // analyst as if it were the endpoint's real response, and the operator
+        // would be given a fabricated configuration built from
+        // {"message":"Unauthorized"} rather than told the call did not work.
+        if (! $result->ok || ! $result->isJson) {
+            return ['config' => null, 'final_test' => $result, 'source' => 'none'];
+        }
+
+        $reduction = $this->structureReducer->reduce($result->body);
+        $seed = $this->deterministicSeed($transient, $result->body);
+
+        $aiConfig = null;
+        if ((bool) config('connector-api.llm_assist.enabled', true)) {
+            $aiConfig = $this->analyst->produceConfig([
+                'method' => $transient->http_method->value,
+                'url' => $transient->url,
+                'example_args' => $exampleArgs,
+                'reduced' => $reduction['reduced'],
+                'notes' => $reduction['notes'],
+                'schema' => RouteConfigSchema::schema(),
+                'seed' => $seed,
+                'current' => $input,
+            ]);
+        }
+
+        $produced = RouteConfigSchema::sanitize($this->mergeProducedConfig($input, $aiConfig, $seed));
+
+        return [
+            'config' => $produced,
+            'final_test' => $this->dryRunProducedConfig($connector, $produced ?? $input, $exampleArgs),
+            'source' => 'response',
+        ];
+    }
+
+    /**
+     * Build a transient (UNSAVED) route from a config JSON so the tester's
+     * planner/executor/SSRF path can dry-run it without persistence. In-memory
+     * params + connector relation are set so RequestPlanner + effectiveAuthProfile
+     * resolve exactly as they would for a saved route.
+     *
+     * @param  array<string,mixed>  $config
+     */
+    private function transientRouteFromConfig(ApiConnector $connector, array $config): ApiRoute
+    {
+        $flat = RouteConfig::applyToRoute($config);
+
+        $route = new ApiRoute;
+        $route->tenant_id = $connector->tenant_id;
+        $route->api_connector_id = $connector->id;
+        $route->project_key = $connector->projectScope();
+        $route->name = (string) ($flat['name'] ?? '');
+        $route->slug = '';
+        $route->description = $flat['description'] ?? null;
+        $route->http_method = $flat['http_method'] ?? HttpMethod::GET->value;
+        $route->url = (string) ($flat['url'] ?? '');
+        $route->auth_profile_id = $flat['auth_profile_id'] ?? null;
+        $route->mode = $flat['mode'] ?? RouteMode::Tool->value;
+        $route->status = RouteStatus::Draft;
+        $route->endpoint_type = EndpointType::Unknown;
+        $route->endpoint_type_locked = false;
+        $route->timeout_ms = $flat['timeout_ms'] ?? null;
+        $route->cache_ttl_s = $flat['cache_ttl_s'] ?? null;
+        $route->rate_limit = $flat['rate_limit'] ?? null;
+        $route->output_transform = $this->arrayOrNull($flat['output_transform'] ?? null);
+        $route->pagination = $this->arrayOrNull($flat['pagination'] ?? null);
+        $route->items_path = is_string($flat['items_path'] ?? null) ? $flat['items_path'] : null;
+
+        $params = [];
+        foreach ($flat['parameters'] ?? [] as $index => $p) {
+            $model = new ApiRouteParameter;
+            $model->tenant_id = $connector->tenant_id;
+            $model->name = (string) ($p['name'] ?? '');
+            $model->location = $p['location'] ?? ParamLocation::Query->value;
+            $model->source = $p['source'] ?? ParamSource::Llm->value;
+            $model->type = $p['type'] ?? ParamType::String->value;
+            $model->required = (bool) ($p['required'] ?? false);
+            $model->value = $p['value'] ?? null;
+            $model->secret_ref = $p['secret_ref'] ?? null;
+            $model->description = $p['description'] ?? null;
+            $model->sort_order = isset($p['sort_order']) ? (int) $p['sort_order'] : $index;
+            $params[] = $model;
+        }
+        $route->setRelation('parameters', new Collection($params));
+        $route->setRelation('connector', $connector);
+
+        return $route;
+    }
+
+    /**
+     * Dry-run a PRODUCED config as the "test finale". LLM params are forced
+     * non-required so a freshly-inferred required arg missing from the example
+     * args can't fail the verification call (the operator tightens later).
+     *
+     * @param  array<string,mixed>  $config
+     * @param  array<string,mixed>  $exampleArgs
+     */
+    private function dryRunProducedConfig(ApiConnector $connector, array $config, array $exampleArgs): TestResult
+    {
+        $relaxed = $config;
+        $params = $relaxed['request']['params'] ?? [];
+        if (is_array($params)) {
+            $relaxed['request']['params'] = array_map(
+                static fn (mixed $p): mixed => is_array($p) ? ['required' => false] + $p : $p,
+                $params,
+            );
+        }
+
+        return $this->tester->dryRun($this->transientRouteFromConfig($connector, $relaxed), $exampleArgs);
+    }
+
+    /**
+     * Deterministic seed for the AI: the classified endpoint_type/items_path +
+     * the detected pagination, expressed as a partial config `response` group.
+     *
+     * @return array<string,mixed>
+     */
+    private function deterministicSeed(ApiRoute $transient, mixed $body): array
+    {
+        $classification = $this->schemaInferrer->classifyEndpoint($body);
+        $type = $classification['type'];
+
+        return [
+            'response' => [
+                'endpoint_type' => $type === EndpointType::Unknown ? 'auto' : $type->value,
+                'items_path' => $classification['items_path'],
+                'pagination' => $this->paginationDetector->detect($transient, $body),
+            ],
+        ];
+    }
+
+    /**
+     * Merge the AI config (or the input, when AI is off) with the deterministic
+     * seed — the classifier/detector WIN on the structural fields.
+     *
+     * @param  array<string,mixed>  $input
+     * @param  array<string,mixed>|null  $aiConfig
+     * @param  array<string,mixed>  $seed
+     * @return array<string,mixed>
+     */
+    private function mergeProducedConfig(array $input, ?array $aiConfig, array $seed): array
+    {
+        $base = is_array($aiConfig) ? $aiConfig : $input;
+        $seedResponse = is_array($seed['response'] ?? null) ? $seed['response'] : [];
+        $response = is_array($base['response'] ?? null) ? $base['response'] : [];
+
+        // Deterministic classification wins when it decided; otherwise keep base.
+        if (($seedResponse['endpoint_type'] ?? 'auto') !== 'auto') {
+            $response['endpoint_type'] = $seedResponse['endpoint_type'];
+            $response['items_path'] = $seedResponse['items_path'] ?? null;
+        }
+        // Detected pagination wins; else keep whatever the AI/base proposed.
+        if (($seedResponse['pagination'] ?? null) !== null) {
+            $response['pagination'] = $seedResponse['pagination'];
+        }
+        $base['response'] = $response;
+
+        return $base;
+    }
+
+    /**
+     * Adapt the flat OpenAPI-importer suggestion into a grouped config JSON,
+     * carrying request/auth/options from the current input config.
+     *
+     * @param  array<string,mixed>  $suggestion
+     * @param  array<string,mixed>  $input
+     * @return array<string,mixed>
+     */
+    private function suggestionToConfig(array $suggestion, array $input): array
+    {
+        $identity = is_array($input['identity'] ?? null) ? $input['identity'] : [];
+        $request = is_array($input['request'] ?? null) ? $input['request'] : [];
+
+        $params = [];
+        foreach (is_array($suggestion['parameters'] ?? null) ? $suggestion['parameters'] : [] as $index => $p) {
+            if (! is_array($p)) {
+                continue;
+            }
+            $params[] = ['sort_order' => $index] + $p;
+        }
+
+        return [
+            'identity' => [
+                'name' => $suggestion['tool_name'] ?? ($identity['name'] ?? ''),
+                'slug' => null,
+                'description' => $suggestion['tool_description'] ?? ($identity['description'] ?? null),
+                'mode' => $identity['mode'] ?? RouteMode::Tool->value,
+            ],
+            'request' => [
+                'http_method' => $request['http_method'] ?? HttpMethod::GET->value,
+                'url' => $request['url'] ?? '',
+                'auth_profile_id' => $request['auth_profile_id'] ?? null,
+                'params' => $params,
+            ],
+            'response' => [
+                'endpoint_type' => ($suggestion['endpoint_type'] ?? 'unknown') !== 'unknown' ? $suggestion['endpoint_type'] : 'auto',
+                'items_path' => $suggestion['items_path'] ?? null,
+                'transform' => is_array($input['response'] ?? null) ? ($input['response']['transform'] ?? null) : null,
+                'pagination' => $suggestion['pagination'] ?? null,
+            ],
+            'options' => is_array($input['options'] ?? null) ? $input['options'] : [],
+        ];
+    }
+
+    /* ----------------------------------------------------------------------
+     | Relations (List → Detail) — spec Obj 3
+     * -------------------------------------------------------------------- */
+
+    /**
+     * @return Collection<int,ApiRouteRelation>
+     */
+    public function listRelations(ApiConnector $connector): Collection
+    {
+        $query = ApiRouteRelation::forTenant($connector->tenant_id)
+            ->where('api_connector_id', $connector->id)
+            ->with(['listRoute', 'detailRoute']);
+        $query->orderBy('sort_order')->orderBy('id');
+
+        return $query->get();
+    }
+
+    /**
+     * @param  array<string,mixed>  $data
+     *
+     * @throws RuntimeException 422 on an invalid pair / mapping / duplicate
+     */
+    public function createRelation(ApiConnector $connector, array $data): ApiRouteRelation
+    {
+        $list = $this->findRoute((int) ($data['list_route_id'] ?? 0));
+        $detail = $this->findRoute((int) ($data['detail_route_id'] ?? 0));
+        $fieldMap = $this->normalizeFieldMap($data['field_map'] ?? []);
+        $this->assertRelationValid($connector, $list, $detail, $fieldMap);
+
+        $relation = new ApiRouteRelation;
+        $relation->tenant_id = $connector->tenant_id;
+        $relation->api_connector_id = $connector->id;
+        $relation->list_route_id = $list->id;
+        $relation->detail_route_id = $detail->id;
+        $relation->name = isset($data['name']) ? (string) $data['name'] : null;
+        $relation->description = isset($data['description']) ? (string) $data['description'] : null;
+        $relation->field_map = $fieldMap;
+        $relation->sort_order = (int) ($data['sort_order'] ?? 0);
+        $this->persist($relation);
+
+        // Re-annotate both peers' tool definitions so the LLM chains them (Fase 3).
+        $this->refreshToolDefinitionsByIds([$list->id, $detail->id]);
+
+        return $this->loadRelation($relation);
+    }
+
+    /**
+     * @param  array<string,mixed>  $data
+     *
+     * @throws RuntimeException 422 on an invalid pair / mapping / duplicate
+     */
+    public function updateRelation(ApiRouteRelation $relation, array $data): ApiRouteRelation
+    {
+        $connector = ApiConnector::forTenant($relation->tenant_id)
+            ->findOrFail($relation->api_connector_id);
+
+        // Peers before the change — re-annotated too if the pair is repointed.
+        $previousPeerIds = [$relation->list_route_id, $relation->detail_route_id];
+
+        $list = array_key_exists('list_route_id', $data)
+            ? $this->findRoute((int) $data['list_route_id'])
+            : $this->findRoute($relation->list_route_id);
+        $detail = array_key_exists('detail_route_id', $data)
+            ? $this->findRoute((int) $data['detail_route_id'])
+            : $this->findRoute($relation->detail_route_id);
+        $fieldMap = array_key_exists('field_map', $data)
+            ? $this->normalizeFieldMap($data['field_map'])
+            : $relation->field_map;
+
+        $this->assertRelationValid($connector, $list, $detail, $fieldMap, ignoreRelationId: $relation->id);
+
+        $relation->list_route_id = $list->id;
+        $relation->detail_route_id = $detail->id;
+        if (array_key_exists('name', $data)) {
+            $relation->name = $data['name'] === null ? null : (string) $data['name'];
+        }
+        if (array_key_exists('description', $data)) {
+            $relation->description = $data['description'] === null ? null : (string) $data['description'];
+        }
+        $relation->field_map = $fieldMap;
+        if (array_key_exists('sort_order', $data)) {
+            $relation->sort_order = (int) $data['sort_order'];
+        }
+        $this->persist($relation);
+
+        $this->refreshToolDefinitionsByIds([...$previousPeerIds, $list->id, $detail->id]);
+
+        return $this->loadRelation($relation);
+    }
+
+    public function deleteRelation(ApiRouteRelation $relation): void
+    {
+        $peerIds = [$relation->list_route_id, $relation->detail_route_id];
+        if (! $relation->delete()) {
+            throw new RuntimeException('Failed to delete relation.');
+        }
+
+        // The chain guidance must drop from both peers' descriptions.
+        $this->refreshToolDefinitionsByIds($peerIds);
+    }
+
+    /**
+     * Admin drill-test: take a single LIST item (client-supplied, or the item at
+     * `$itemIndex` in the list route's last test payload), apply the relation's
+     * field_map to build the detail route's arguments, and fire a NON-persisted
+     * raw call to the detail route. SSRF + auth still apply (inside dryRun); the
+     * detail route's last_test_* is NOT touched.
+     *
+     * @param  array<string,mixed>|null  $listItem
+     * @return array{arguments: array<string,mixed>, result: TestResult}
+     *
+     * @throws RuntimeException 422 when the item is missing or the mapping does not
+     *                          fit the chosen item (R14 — never a silent null)
+     */
+    public function drillTest(ApiRouteRelation $relation, ?array $listItem, ?int $itemIndex): array
+    {
+        // detailRoute + listRoute are guaranteed by the NOT-NULL FKs + cascade.
+        $relation->loadMissing(['detailRoute.parameters', 'listRoute']);
+        $item = $this->resolveDrillItem($relation, $listItem, $itemIndex);
+
+        try {
+            $arguments = $this->relationMapper->mapArguments($item, $relation->field_map);
+        } catch (ApiConnectorException $e) {
+            // A mapping that doesn't fit the chosen item is a client-fixable 422.
+            throw new RuntimeException($e->getMessage(), 422);
+        }
+
+        $result = $this->tester->dryRun($relation->detailRoute, $arguments);
+
+        return ['arguments' => $arguments, 'result' => $result];
     }
 
     /* ----------------------------------------------------------------------
@@ -371,8 +899,43 @@ final class ConnectorAdminService
         if (array_key_exists('output_transform', $data)) {
             $route->output_transform = $this->arrayOrNull($data['output_transform']);
         }
+        if (array_key_exists('pagination', $data)) {
+            $route->pagination = $this->arrayOrNull($data['pagination']);
+        }
+        $this->applyEndpointType($route, $data);
 
         $route->slug = $this->resolveSlug($data, $route);
+    }
+
+    /**
+     * Apply the operator's endpoint-taxonomy choice.
+     *
+     * The wire contract is `endpoint_type ∈ {auto, list, detail}`:
+     *  - `auto` (or null/'') UNLOCKS detection — testRoute owns endpoint_type +
+     *    items_path from the next live response.
+     *  - `list`/`detail` LOCK an explicit override the detector must not clobber.
+     * `items_path` is only meaningful for a list; a supplied value is stored
+     * verbatim ('' = top-level array).
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private function applyEndpointType(ApiRoute $route, array $data): void
+    {
+        if (array_key_exists('endpoint_type', $data)) {
+            $choice = $data['endpoint_type'];
+            if ($choice === EndpointType::List->value || $choice === EndpointType::Detail->value) {
+                $route->endpoint_type = EndpointType::from($choice);
+                $route->endpoint_type_locked = true;
+            } else {
+                // 'auto' / null / '' / anything else → hand control back to the detector.
+                $route->endpoint_type_locked = false;
+            }
+        }
+
+        if (array_key_exists('items_path', $data)) {
+            $value = $data['items_path'];
+            $route->items_path = is_string($value) ? $value : null;
+        }
     }
 
     /**
@@ -478,6 +1041,198 @@ final class ConnectorAdminService
     private function loadRoute(ApiRoute $route): ApiRoute
     {
         return $route->fresh(['parameters']) ?? $route;
+    }
+
+    private function loadRelation(ApiRouteRelation $relation): ApiRouteRelation
+    {
+        return $relation->fresh(['listRoute', 'detailRoute']) ?? $relation;
+    }
+
+    /**
+     * The List→Detail relation context of a route (Fase 3): `inbound` = relations
+     * where it is the DETAIL (each with the feeding list slug + field_map),
+     * `outbound` = relations where it is the LIST (each with the drillable detail
+     * slug). Feeds {@see ToolDefinitionGenerator::generate()} so the tool
+     * descriptions guide the LLM to chain list→detail. Tenant-scoped (R30).
+     *
+     * @return array{inbound: list<array{list_slug: string, field_map: mixed}>, outbound: list<array{detail_slug: string}>}
+     */
+    private function relationContextFor(ApiRoute $route): array
+    {
+        $tenant = $route->tenant_id;
+
+        $inbound = [];
+        $inboundRelations = ApiRouteRelation::forTenant($tenant)
+            ->where('detail_route_id', $route->id)
+            ->with('listRoute:id,slug')
+            ->get();
+        foreach ($inboundRelations as $relation) {
+            $inbound[] = ['list_slug' => $relation->listRoute->slug, 'field_map' => $relation->field_map];
+        }
+
+        $outbound = [];
+        $outboundRelations = ApiRouteRelation::forTenant($tenant)
+            ->where('list_route_id', $route->id)
+            ->with('detailRoute:id,slug')
+            ->get();
+        foreach ($outboundRelations as $relation) {
+            $outbound[] = ['detail_slug' => $relation->detailRoute->slug];
+        }
+
+        return ['inbound' => $inbound, 'outbound' => $outbound];
+    }
+
+    /**
+     * Re-annotate the tool_definition of each given route from its current
+     * relation context. Skips routes that are missing (cross-tenant / deleted) or
+     * not yet tested (no input_schema to annotate). Side-effect only — never
+     * throws for a stale peer.
+     *
+     * @param  list<int>  $routeIds
+     */
+    private function refreshToolDefinitionsByIds(array $routeIds): void
+    {
+        foreach (array_unique(array_filter($routeIds)) as $id) {
+            $route = ApiRoute::forTenant($this->currentTenant())
+                ->with('parameters')
+                ->find((int) $id);
+            if ($route === null) {
+                continue;
+            }
+
+            $inputSchema = is_array($route->input_schema) ? $route->input_schema : null;
+            if ($inputSchema === null) {
+                continue; // never tested — nothing to annotate yet
+            }
+
+            $route->tool_definition = $this->toolGenerator->generate(
+                $route,
+                $inputSchema,
+                $route->last_test_payload,
+                $this->relationContextFor($route),
+            );
+            $this->persist($route);
+        }
+    }
+
+    /**
+     * @param  list<array{from:string,to_param:string,to_location?:string}>  $fieldMap
+     *
+     * @throws RuntimeException 422 when the pair or the mapping is invalid
+     */
+    private function assertRelationValid(
+        ApiConnector $connector,
+        ApiRoute $list,
+        ApiRoute $detail,
+        array $fieldMap,
+        ?int $ignoreRelationId = null,
+    ): void {
+        if ($list->id === $detail->id) {
+            throw new RuntimeException('A relation must link two DIFFERENT routes.', 422);
+        }
+        if ($list->api_connector_id !== $connector->id || $detail->api_connector_id !== $connector->id) {
+            throw new RuntimeException('Both the list and detail routes must belong to this connector.', 422);
+        }
+        if (! $list->isList()) {
+            throw new RuntimeException('The list_route must have endpoint_type=list.', 422);
+        }
+        if (! $detail->isDetail()) {
+            throw new RuntimeException('The detail_route must have endpoint_type=detail.', 422);
+        }
+        if ($fieldMap === []) {
+            throw new RuntimeException('field_map cannot be empty.', 422);
+        }
+
+        // R5: every target must be an LLM parameter of the detail route — a
+        // fixed/secret param (or an undeclared token) cannot be injected from a
+        // list item. A path token like {id} is itself declared as an llm param.
+        $detail->loadMissing('parameters');
+        $llmParamNames = $detail->parameters
+            ->filter(fn (ApiRouteParameter $p): bool => $p->source === ParamSource::Llm)
+            ->map(fn (ApiRouteParameter $p): string => $p->name)
+            ->all();
+
+        foreach ($fieldMap as $entry) {
+            $toParam = $entry['to_param'];
+            if (! in_array($toParam, $llmParamNames, true)) {
+                throw new RuntimeException(
+                    "field_map target '{$toParam}' is not an LLM parameter of the detail route.",
+                    422,
+                );
+            }
+        }
+
+        $duplicate = ApiRouteRelation::forTenant($connector->tenant_id)
+            ->where('list_route_id', $list->id)
+            ->where('detail_route_id', $detail->id)
+            ->when($ignoreRelationId !== null, fn ($q) => $q->whereKeyNot($ignoreRelationId))
+            ->exists();
+        if ($duplicate) {
+            throw new RuntimeException('A relation between these two routes already exists.', 422);
+        }
+    }
+
+    /**
+     * Normalise the field_map into an ordered list of
+     * `{from, to_param, to_location?}`, dropping incomplete rows.
+     *
+     * @return list<array{from:string,to_param:string,to_location?:string}>
+     */
+    private function normalizeFieldMap(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            $from = trim((string) ($entry['from'] ?? ''));
+            $toParam = trim((string) ($entry['to_param'] ?? ''));
+            if ($from === '' || $toParam === '') {
+                continue;
+            }
+
+            $mapped = ['from' => $from, 'to_param' => $toParam];
+            $location = $entry['to_location'] ?? null;
+            if (is_string($location) && $location !== '') {
+                $mapped['to_location'] = $location;
+            }
+            $out[] = $mapped;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Resolve the single list item to drill from: an explicit client-supplied
+     * item wins; otherwise the item at `$itemIndex` (default 0) of the list
+     * route's persisted last_test_payload, unwrapped at its items_path.
+     *
+     * @param  array<string,mixed>|null  $listItem
+     * @return array<string,mixed>
+     *
+     * @throws RuntimeException 422 when no item can be resolved
+     */
+    private function resolveDrillItem(ApiRouteRelation $relation, ?array $listItem, ?int $itemIndex): array
+    {
+        if ($listItem !== null) {
+            return $listItem;
+        }
+
+        $list = $relation->listRoute;
+        $items = $this->relationMapper->itemsAt($list->last_test_payload, $list->items_path);
+        $index = $itemIndex ?? 0;
+        if (! array_key_exists($index, $items) || ! is_array($items[$index])) {
+            throw new RuntimeException(
+                'No list item at that index — test the list route first to populate its items.',
+                422,
+            );
+        }
+
+        return $items[$index];
     }
 
     /**

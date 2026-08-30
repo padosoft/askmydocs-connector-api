@@ -43,12 +43,13 @@ final class ServiceProviderTest extends TestCase
         $this->assertIsBool(config('connector-api.chat_tools.enabled'));
     }
 
-    public function test_both_artisan_commands_are_registered(): void
+    public function test_artisan_commands_are_registered(): void
     {
         $commands = array_keys(Artisan::all());
 
         $this->assertContains('api-connector:list', $commands);
         $this->assertContains('api-connector:test', $commands);
+        $this->assertContains('api-connector:show-config', $commands);
     }
 
     public function test_admin_routes_are_registered_under_the_default_prefix(): void
@@ -60,6 +61,14 @@ final class ServiceProviderTest extends TestCase
         $route = Route::getRoutes()->getByName('api-connectors.index');
         $this->assertNotNull($route);
         $this->assertSame('api/admin/api-connectors', $route->uri());
+        $this->assertContains('auth', $route->gatherMiddleware());
+        $this->assertContains('can:manageConnectors', $route->gatherMiddleware());
+    }
+
+    public function test_default_admin_route_configuration_fails_closed_for_guests(): void
+    {
+        $this->getJson('/api/admin/api-connectors')
+            ->assertUnauthorized();
     }
 
     public function test_shared_singletons_resolve(): void

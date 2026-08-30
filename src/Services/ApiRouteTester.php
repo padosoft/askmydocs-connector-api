@@ -7,8 +7,11 @@ namespace Padosoft\AskMyDocsConnectorApi\Services;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use Padosoft\AskMyDocsConnectorApi\Auth\AuthApplierFactory;
+use Padosoft\AskMyDocsConnectorApi\Auth\AuthMaterial;
 use Padosoft\AskMyDocsConnectorApi\Models\ApiRoute;
 use Padosoft\AskMyDocsConnectorApi\Support\HttpDispatcher;
+use Padosoft\AskMyDocsConnectorApi\Support\HttpMethod;
+use Padosoft\AskMyDocsConnectorApi\Support\RequestPlan;
 use Padosoft\AskMyDocsConnectorApi\Support\RequestPlanner;
 use Padosoft\AskMyDocsConnectorApi\Support\TestResult;
 use Padosoft\AskMyDocsConnectorApi\Support\UrlGuard;
@@ -42,23 +45,89 @@ final class ApiRouteTester
     }
 
     /**
+     * Run the SAME real call as {@see test()} (auth + RequestPlanner + UrlGuard
+     * SSRF + dispatch + JSON classification) but persist NOTHING: no `last_test_*`
+     * clobber, no rate-limit, no cache. Used by the list→detail drill-test, which
+     * fires the detail route with arguments mapped from a chosen list item and
+     * only wants the raw response — not to mutate the detail route's state.
+     *
      * @param  array<string,mixed>  $exampleArgs
+     * @param  array<string,mixed>  $extraQuery  ad-hoc query overrides (pagination / search), merged post-plan
      */
-    private function run(ApiRoute $route, array $exampleArgs): TestResult
+    public function dryRun(ApiRoute $route, array $exampleArgs = [], array $extraQuery = []): TestResult
+    {
+        return $this->run($route, $exampleArgs, $extraQuery);
+    }
+
+    /**
+     * Ad-hoc "playground" probe (spec §5.1 — the FREE-endpoint variant): fire a
+     * raw {method, url, headers, query, body} request WITHOUT a persisted route,
+     * connector or auth. Runs the SAME execution + response-classification stack
+     * as {@see test()} (UrlGuard SSRF → dispatch → JSON classify → TestResult),
+     * but persists nothing and infers no schema/tool — it is a read-only
+     * diagnostic. The call is unauthenticated by construction (AuthMaterial::none).
+     *
+     * @param  array<string,string>  $headers
+     * @param  array<string,mixed>  $query
+     * @param  array<string,mixed>|null  $body  raw JSON body (sent only when the method allows one)
+     */
+    public function probe(
+        HttpMethod $method,
+        string $url,
+        array $headers = [],
+        array $query = [],
+        ?array $body = null,
+        ?int $timeoutMs = null,
+    ): TestResult {
+        $plan = new RequestPlan(
+            method: $method,
+            url: $url,
+            query: $query,
+            headers: $headers,
+            body: $method->allowsBody() ? $body : null,
+        );
+
+        $timeout = $timeoutMs ?? (int) config('connector-api.defaults.timeout_ms', 10000);
+
+        return $this->execute($plan, AuthMaterial::none(), $timeout);
+    }
+
+    /**
+     * @param  array<string,mixed>  $exampleArgs
+     * @param  array<string,mixed>  $extraQuery
+     */
+    private function run(ApiRoute $route, array $exampleArgs, array $extraQuery = []): TestResult
     {
         try {
             $profile = $route->effectiveAuthProfile();
-            $plan = $this->planner->plan($route, $exampleArgs, $profile);
+            $plan = $this->planner->plan($route, $exampleArgs, $profile)->withMergedQuery($extraQuery);
             $material = $this->authFactory->materialFor($profile);
-
-            $this->urlGuard->assertAllowed($plan->url);
-
             $timeoutMs = $route->timeout_ms ?? (int) config('connector-api.defaults.timeout_ms', 10000);
+        } catch (Throwable $e) {
+            return TestResult::networkError($e->getMessage());
+        }
+
+        return $this->execute($plan, $material, $timeoutMs);
+    }
+
+    /**
+     * Run a resolved plan through UrlGuard + the dispatcher and classify the
+     * response into a {@see TestResult} (R14 — success+JSON / success+non-JSON /
+     * HTTP error / network error are all distinct), timing the outbound call.
+     * Shared by {@see run()} (persisting test) and {@see probe()} (ad-hoc).
+     */
+    private function execute(RequestPlan $plan, AuthMaterial $material, int $timeoutMs): TestResult
+    {
+        $startedAt = microtime(true);
+
+        try {
+            $this->urlGuard->assertAllowed($plan->url);
             $response = $this->dispatcher->send($plan, $material, $timeoutMs);
+            $durationMs = $this->elapsedMs($startedAt);
 
             $raw = $response->body();
             $decoded = json_decode($raw, true);
-            $isJson = json_last_error() === JSON_ERROR_NONE && (is_array($decoded));
+            $isJson = json_last_error() === JSON_ERROR_NONE && is_array($decoded);
 
             return new TestResult(
                 ok: $response->successful() && $isJson,
@@ -67,10 +136,16 @@ final class ApiRouteTester
                 body: $isJson ? $decoded : $raw,
                 isJson: $isJson,
                 error: $response->successful() ? null : "Endpoint returned HTTP {$response->status()}.",
+                durationMs: $durationMs,
             );
         } catch (Throwable $e) {
-            return TestResult::networkError($e->getMessage());
+            return TestResult::networkError($e->getMessage(), $this->elapsedMs($startedAt));
         }
+    }
+
+    private function elapsedMs(float $startedAt): int
+    {
+        return (int) round((microtime(true) - $startedAt) * 1000);
     }
 
     private function persist(ApiRoute $route, TestResult $result): void

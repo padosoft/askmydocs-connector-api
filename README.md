@@ -149,7 +149,7 @@ The package self-registers through Laravel auto-discovery (`Padosoft\AskMyDocsCo
 **Publish (optional)**
 
 ```bash
-# Publish config/connector-api.php for env-var overrides + the MANDATORY routes.middleware override
+# Publish config/connector-api.php for env-var overrides + the host routes.middleware override
 php artisan vendor:publish --tag=api-connector-config
 
 # Copy the migrations into your app (only if you want to customise them)
@@ -483,7 +483,7 @@ $result = app(ApiToolExecutor::class)->execute($route, $arguments, ['conversatio
 
 `activeToolsForTenant()` returns only `active` routes with `mode` ∈ {`tool`, `both`}, whose connector `is_active`, matching the tenant + project scope, deduped by tool name and capped at `tools.max_per_conversation`.
 
-**3. Override the route middleware (MANDATORY — R32).** The package's default `routes.middleware` is `['api']`, which is **unauthenticated** and for standalone dev only. In your published `config/connector-api.php` the host **must** replace it with its authenticated admin stack:
+**3. Override the route middleware for the host (R32).** The package default fails closed with `['api', 'auth', 'can:manageConnectors']`. In your published `config/connector-api.php`, replace it with the host's authenticated, tenant-aware admin stack:
 
 ```php
 // config/connector-api.php (host)
@@ -540,7 +540,7 @@ Every knob in `config/connector-api.php`, its env var, default, and meaning. Pub
 | `llm_assist.enabled` | `API_CONNECTOR_LLM_ASSIST` | `true` | Use the host's bound `ToolDescriptionAssistant` to draft the tool name/description from the test call; otherwise a field-derived draft is used. |
 | `routes.enabled` | `API_CONNECTOR_ROUTES_ENABLED` | `true` | Mount the admin HTTP routes. Off → the package ships without the admin surface. |
 | `routes.prefix` | `API_CONNECTOR_ROUTES_PREFIX` | `api/admin/api-connectors` | URL prefix for the admin routes. |
-| `routes.middleware` | *(no env var — override in published config)* | `['api']` | **MUST** be replaced by the host with its authenticated admin stack (R32). The default is unauthenticated — dev only. |
+| `routes.middleware` | *(no env var — override in published config)* | `['api', 'auth', 'can:manageConnectors']` | Fails closed by default; hosts should replace it with their authenticated tenant-aware admin stack (R32). |
 
 ## Security notes
 
@@ -550,7 +550,7 @@ Security is not a footnote for a connector that lets operators point the app at 
 - **Credentials encrypted at rest, hidden, and never surfaced to the LLM.** `ApiAuthProfile::$credentials` is cast `encrypted:array` (Laravel app-key encryption) and listed in `$hidden`, so it is never serialized to a JSON response or a log. `secret`-source params are resolved server-side from the profile via `secret_ref` and injected into the outbound request only; they are excluded from `loggableParams` and never enter the tool schema the model sees. On update, credentials are merged, so a blank field never wipes a stored secret.
 - **Output byte-cap limits exfiltration.** `output.max_bytes` (default 16 KiB) bounds the JSON handed back to the model. A hostile or misconfigured endpoint cannot pump an unbounded payload through a tool call — it is truncated to a preview envelope.
 - **R30 per-tenant scoping — IDOR-safe by design.** Every loader in `ConnectorAdminService` (and the registry, and the CLI) is scoped to the active tenant with `forTenant()`; there is **no** implicit route-model binding. An id guessed from another tenant returns **404**, not 403 — the app never leaks whether an id exists in another tenant.
-- **The MANDATORY route-middleware override.** The package default `routes.middleware` is `['api']`, which is **unauthenticated**. The host **must** override it with `['api', 'auth:sanctum', 'tenant.authorize', 'can:manageConnectors']` (R32) in its published `config/connector-api.php`. Shipping the default in production exposes the entire connector admin surface — including credential writes — publicly. This is the single most important step in [Host integration](#host-integration).
+- **The host route-middleware override.** The package default `routes.middleware` is `['api', 'auth', 'can:manageConnectors']`, so an omitted override fails closed. AskMyDocs still overrides it with `['api', 'auth:sanctum', 'tenant.authorize', 'can:manageConnectors']` (R32) to enforce its Sanctum and tenant boundaries explicitly. See [Host integration](#host-integration).
 - **Failure is loud, never silent (R14).** A failed Test is a valid displayed outcome (`ok:false`), not a fabricated schema. A runtime failure returns `{error, status}` so the model explains it. An OAuth2 token-exchange failure throws rather than calling the endpoint unauthenticated.
 
 ## Testing
@@ -662,7 +662,7 @@ Unattended service-to-service access; the token is fetched (SSRF-guarded) and ca
 | **Tool never appears in chat** | Host has not resolved `ApiToolRegistry`/`ApiToolExecutor` into its tool loop | Wire the two singletons in a host service provider — see [Host integration](#host-integration). |
 | **Route in the wrong project** | Route inherits its `project_key` from the connector; it's tenant-global only when the connector's project is empty | Set the connector's `project_key`; you cannot change it while the connector owns routes (R28 → 422) — delete the routes first. |
 | **Tool description is a bland "Calls GET /path…"** | `llm_assist.enabled` off, or no host `ToolDescriptionAssistant` bound | Bind an AI-backed assistant + set `API_CONNECTOR_LLM_ASSIST=true`, or edit the description and call `regenerate-description`. |
-| **Admin API reachable without login** | `routes.middleware` left at the default `['api']` | Override it with the authenticated admin stack (R32) — see [Security notes](#security-notes). |
+| **Admin API returns 401/403 in the host** | Host-specific middleware not configured | Override the secure package default with the host's authenticated tenant-aware stack (R32) — see [Security notes](#security-notes). |
 | **PHPStan OOMs locally** | Default memory limit too low | `composer analyse` (already passes `--memory-limit=512M`). |
 
 ## Roadmap
