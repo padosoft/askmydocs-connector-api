@@ -99,6 +99,7 @@ final class ConnectorAdminService
         $query = ApiConnector::forTenant($this->currentTenant())
             ->with([
                 'routes',
+                'authProfiles',
                 'relations.listRoute:id,name,slug,endpoint_type',
                 'relations.detailRoute:id,name,slug,endpoint_type',
             ]);

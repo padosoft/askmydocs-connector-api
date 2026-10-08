@@ -78,6 +78,27 @@ final class ConnectorCrudTest extends TestCase
         $response->assertJsonPath('data.0.name', 'Globex Conn');
     }
 
+    public function test_index_exposes_saved_auth_profiles_without_credentials(): void
+    {
+        $this->app->make(TenantContext::class)->set('acme');
+        $connectorId = $this->postJson(self::PREFIX, ['name' => 'C1'])
+            ->assertCreated()->json('data.id');
+
+        $profileId = $this->postJson(self::PREFIX."/{$connectorId}/auth-profiles", [
+            'type' => 'basic',
+            'credentials' => ['username' => 'test-user', 'password' => 'test-password'],
+        ])->assertCreated()->json('data.id');
+
+        $response = $this->getJson(self::PREFIX)->assertOk();
+        $response->assertJsonStructure(['data' => [['auth_profiles']]]);
+        $response->assertJsonCount(1, 'data.0.auth_profiles');
+        $response->assertJsonPath('data.0.auth_profiles.0.id', $profileId);
+        $response->assertJsonPath('data.0.auth_profiles.0.type', 'basic');
+        $response->assertJsonPath('data.0.auth_profiles.0.has_credentials', true);
+        $response->assertJsonMissingPath('data.0.auth_profiles.0.credentials');
+        $this->assertStringNotContainsString('test-password', $response->getContent());
+    }
+
     public function test_show_and_delete_roundtrip(): void
     {
         $this->app->make(TenantContext::class)->set('acme');
